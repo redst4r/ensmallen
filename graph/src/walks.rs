@@ -786,6 +786,12 @@ impl Graph {
         start_node: NodeT,
     ) -> Result<impl IndexedParallelIterator<Item = Vec<NodeT>> + 'a> {
         self.must_have_edges()?;
+
+        // TODO check that the node is in the graph
+        if start_node >= self.get_number_of_nodes() {
+            return Err("NodeID {start_node} not found in graph".to_string())
+        }
+
         let random_state = splitmix64(parameters.random_state as u64);
         self.par_iter_walks(
             quantity,
@@ -797,7 +803,7 @@ impl Graph {
                 // ) as NodeT;
                 (splitmix64(random_state + index as u64), unsafe {
                     self.get_unchecked_unique_source_node_id(
-                        random_source_id % self.get_number_of_unique_source_nodes(),
+                        random_source_id % self.get_number_of_unique_source_nodes(),  // todo not needed
                     )
                 })
             },

@@ -2,37 +2,14 @@ use std::collections::HashMap;
 use indicatif::{ProgressBar, ProgressStyle};
 use statrs::distribution::Geometric;
 use rand::distributions::Distribution;
-// use pyo3::prelude::*;
 
 use crate::{Graph, NodeT, WalksParameters};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
-// use cpu_models::WalkTransformer;
 
-/// Transformer that just picks the first and last node
-// #[derive(Debug, Clone, Default)]
-// pub struct StartEndWalkTransformer();
-// unsafe impl Sync for StartEndWalkTransformer {}
-// unsafe impl Send for StartEndWalkTransformer {}
-
-// impl WalkTransformer for StartEndWalkTransformer {
-//     type I<'a, T> = impl IndexedParallelIterator<Item = (usize, Vec<T>)> + 'a where
-//         Self: 'a,
-//         T: Copy + Send + Sync + 'a;
-
-//     fn par_transform_walk<'a, T>(&'a self, i: usize, walk: Vec<T>) -> Self::I<'a, T>
-//     where
-//         T: Copy + Send + Sync + 'a,
-//     {
-//         let mut new_walk = Vec::new();
-//         new_walk.push(*walk.first().unwrap());
-//         new_walk.push(*walk.last().unwrap());
-//         vec![(i, new_walk)].into_par_iter()
-//     }
-// }
 
 /// dummy trait since we cant include from cpu_models
 use core::fmt::Debug;
-trait WalkTransformer: Send + Sync + Clone + Debug + Default {
+trait MyWalkTransformer: Send + Sync + Clone + Debug + Default {
     type I<'a, T>: IndexedParallelIterator<Item = (usize, Vec<T>)> + 'a
     where
         Self: 'a,
@@ -47,52 +24,54 @@ trait WalkTransformer: Send + Sync + Clone + Debug + Default {
 /// Transformer that emulate pagerank (i.e. randomly hopping back to the starting node)
 /// This is equivalent to picking a geometriclly distributed walklength.
 #[derive(Debug, Clone, Default)]
-pub struct PagerankTransformer {
+struct PagerankTransformer {
     alpha: f64,  // prob of continuing the walk (1-teleportation), usually ~0.85
     // walklength_RV: Geometric,
 }
 unsafe impl Sync for PagerankTransformer {}
 unsafe impl Send for PagerankTransformer {}
 
+
+fn pagerank_transform_rw<T: Copy + Send + Sync>(i: usize, walk: Vec<T>, alpha: f64) -> Vec<(usize, Vec<T>)>{
+    let mut rng = rand::rngs::OsRng;
+    // println!("paralell transform! {i}");
+
+    let walk_length = Geometric::new(1.0-alpha).unwrap();  // todo: move into struct.constructior
+    let mut l = walk_length.sample(&mut rng).ceil() as usize;
+    l -= 1; // as l==1 means we didnt move at all and should return the start node
+
+    if l >= walk.len() {
+        println!("l: {l} clipped to {}", walk.len());
+        l = walk.len() -1;  // clipping to max walk length, introducds some bias
+    }   
+
+    let first_node = walk[0]; // *walk.first().unwrap()
+    let last_node = walk[l];
+
+    let new_walk = vec![first_node, last_node];
+    vec![(i, new_walk)]
+}
+
 impl PagerankTransformer {
     pub fn new(alpha: f64) -> Self {
         Self {alpha}
     }
 }
-impl WalkTransformer for PagerankTransformer {
-    type I<'a, T> = impl IndexedParallelIterator<Item = (usize, Vec<T>)> + 'a where
-        Self: 'a,
-        T: Copy + Send + Sync + 'a;
 
-    fn par_transform_walk<'a, T>(&'a self, i: usize, walk: Vec<T>) -> Self::I<'a, T>
-    where
-        T: Copy + Send + Sync + 'a,
-    {   
-        // TODO: not sure if its a great idea to create the RNDs in here 
-        // but the trait-signature doesnt allow mut self (so we could store rng in the struct)
-        // maybe some workaround: pregenerate the RNDs
-        let mut rng = rand::rngs::OsRng;
-        // println!("paralell transform! {i}");
+// impl MyWalkTransformer for PagerankTransformer {
+//     type I<'a, T> = impl IndexedParallelIterator<Item = (usize, Vec<T>)> + 'a where Self: 'a, T: Copy + Send + Sync + 'a;
 
-        let walk_length = Geometric::new(1.0-self.alpha).unwrap();  // todo: move into struct.constructior
-        let mut l = walk_length.sample(&mut rng).ceil() as usize;
-        l -= 1; // as l==1 means we didnt move at all and should return the start node
-
-        if l >= walk.len() {
-            println!("l: {l} clipped to {}", walk.len());
-            l = walk.len() -1;  // clipping to max walk length, introducds some bias
-        }   
-
-        let first_node = walk[0]; // *walk.first().unwrap()
-        let last_node = walk[l];
-
-        let new_walk = vec![first_node, last_node];
-        vec![(i, new_walk)].into_par_iter()
-    }
-}
+//     fn par_transform_walk<'a, T>(&'a self, i: usize, walk: Vec<T>) -> Self::I<'a, T>
+//     where
+//         T: Copy + Send + Sync + 'a,
+//     {   
+//         pagerank_transform_rw(i, walk, self.alpha).into_par_iter()
+//     }
+// }
 
 // use rand::prelude::*;
-pub struct SparseVector {
+#[derive(Debug, Clone, Default)]
+struct SparseVector {
     pub p: HashMap<NodeT, f64>
 }
 impl SparseVector {
@@ -120,8 +99,7 @@ impl SparseVector {
 //         self.p.to_object( py )
 //     }
 // }
-
-pub struct PagerankParams {
+struct PagerankParams {
     alpha: f64,
     iterations: usize,
     max_walk_length: usize
@@ -131,8 +109,7 @@ impl PagerankParams {
         Self {alpha, iterations, max_walk_length}
     }
 }
-
-pub struct PagerankResult {
+struct PagerankResult {
     /// how often was each node visited
     pub frequencies: HashMap<NodeT, usize>
 }
@@ -149,41 +126,43 @@ impl PagerankResult {
 }
 
 /// returns a progress bar instance with standard formatting
-pub fn get_progressbar(total: u64) -> ProgressBar {
-    let bar = ProgressBar::new(total);
-    bar.set_style(
-        ProgressStyle::default_bar()
-            .template("[{elapsed_precise} ETA {eta}] {bar:40.cyan/blue} {pos}/{len} {per_sec}")
-            // .unwrap()
-            .progress_chars("##-"),
-    );
-    bar
-}
+// fn get_progressbar(total: u64) -> ProgressBar {
+//     let bar = ProgressBar::new(total);
+//     bar.set_style(
+//         ProgressStyle::default_bar()
+//             .template("[{elapsed_precise} ETA {eta}] {bar:40.cyan/blue} {pos}/{len} {per_sec}")
+//             // .unwrap()
+//             .progress_chars("##-"),
+//     );
+//     bar
+// }
 
-pub fn pagerank_all(G: &Graph, params: &PagerankParams) -> Vec<PagerankResult> {
-    pagerank_for_nodes(G, G.get_node_ids(), params)
-}
+// fn pagerank_all(g: &Graph, params: &PagerankParams) -> Vec<PagerankResult> {
+//     pagerank_for_nodes(g, g.get_node_ids(), params)
+// }
 
-pub fn pagerank_for_nodes(G: &Graph, nodes: Vec<NodeT>, params: &PagerankParams) -> Vec<PagerankResult> {
+// fn pagerank_for_nodes(g: &Graph, nodes: Vec<NodeT>, params: &PagerankParams) -> Vec<PagerankResult> {
 
-    let pb = get_progressbar(nodes.len() as u64);
-    let mut freqs = Vec::new();
-    for (counter, start_node) in nodes.into_iter().enumerate() {
-        let f = pagerank_single_node(&G, start_node, params);
-        freqs.push(f);
+//     let pb = get_progressbar(nodes.len() as u64);
+//     let mut freqs = Vec::new();
+//     for (counter, start_node) in nodes.into_iter().enumerate() {
+//         let f = pagerank_single_node(&g, start_node, params);
+//         freqs.push(f);
 
-        if counter % 100 == 0 {
-            pb.inc(100)
-        }
-    };
-    freqs
-}
+//         if counter % 100 == 0 {
+//             pb.inc(100)
+//         }
+//     };
+//     freqs
+// }
 
-pub fn pagerank_single_node(G: &Graph, start_node: NodeT, params: &PagerankParams) -> PagerankResult {
+fn pagerank_single_node(g: &Graph, start_node: NodeT, params: &PagerankParams) -> PagerankResult {
+
+    assert!(start_node < g.get_number_of_nodes(), "NodeID not in graph");
 
     let walk_params = WalksParameters::new(params.max_walk_length as u64).unwrap();
 
-    let res = G.par_iter_random_walks_singlenode(params.iterations as u32, &walk_params, start_node).unwrap();
+    let res = g.par_iter_random_walks_singlenode(params.iterations as u32, &walk_params, start_node).unwrap();
 
     let frequencies = if false {
         let q = res.map(|x| {
@@ -208,18 +187,19 @@ pub fn pagerank_single_node(G: &Graph, start_node: NodeT, params: &PagerankParam
         frequencies
     } else {
 
-        let pr_transformer = PagerankTransformer::new(params.alpha);
+        // let pr_transformer = PagerankTransformer::new(params.alpha);
 
         let pr_walk = res.enumerate().flat_map(|(i, walk)| {
             // println!("paralell walk! {i}");
-            pr_transformer.par_transform_walk(i, walk)
+            // pr_transformer.par_transform_walk(i, walk)
+            pagerank_transform_rw(i, walk, params.alpha).into_par_iter()
+            
         });
-
 
         // from https://stackoverflow.com/questions/70096640/how-can-i-create-a-hashmap-using-rayons-parallel-fold
         // parallel fold into a Hashmap to count
         let frequencies: HashMap<NodeT, usize> = pr_walk
-            .fold(HashMap::new, |mut acc, (i, rw)| {
+            .fold(HashMap::new, |mut acc, (_i, rw)| {
                 let lastnode = rw.last().unwrap();
                 *acc.entry(*lastnode).or_insert(0) += 1;
                 acc
@@ -232,36 +212,21 @@ pub fn pagerank_single_node(G: &Graph, start_node: NodeT, params: &PagerankParam
             })
             .unwrap();
 
-        // let x: Vec<_> = pr_walk.collect();
-        // let mut frequencies: HashMap<NodeT, usize> = HashMap::new();m
-
-        // for (_i, rw) in x {
-        //     let last_node = rw.last().unwrap();
-
-        //     let v = frequencies.entry(*last_node).or_insert(0);
-        //     *v += 1;
-
-        // };
-
-        // for n in pr_walk.collect_vec_list() {
-        //     let last_node = n.last().unwrap();
-        //     let v = frequencies.entry(n).or_insert(0);
-        //     *v += 1;
-        // }  
         frequencies
     };
     return PagerankResult{ frequencies }
 }
 
 
-pub fn psev_embedding(G: &Graph, node_weights:  &HashMap<NodeT, f64>, params: &PagerankParams) -> SparseVector {
+fn psev_embedding(g: &Graph, node_weights:  &HashMap<NodeT, f64>, params: &PagerankParams) -> SparseVector {
     
     assert!(node_weights.values().sum::<f64>() == 1.0);
+    // TODO assert all nodes are in the graph
 
     let mut accumulator = SparseVector::new();
 
     for (node, weight) in node_weights {
-        let pr = pagerank_single_node(G, *node, params).normalize();
+        let pr = pagerank_single_node(g, *node, params).normalize();
         let mut ve = SparseVector {p: pr};
         ve.multiply_constant(*weight);
         accumulator.add(ve);
@@ -269,12 +234,26 @@ pub fn psev_embedding(G: &Graph, node_weights:  &HashMap<NodeT, f64>, params: &P
     accumulator
 }
 
-
-
-
 impl Graph {
-    pub fn pagerank_single_node(&self, start_node: NodeT, alpha: f64, iterations: usize, max_walk_length: usize) -> PagerankResult {
+    pub fn pagerank_single_node(&self, start_node: NodeT, alpha: f64, iterations: usize, max_walk_length: usize) -> HashMap<NodeT, usize> {
         let params = PagerankParams::new(alpha, iterations, max_walk_length);
-        pagerank_single_node(self, start_node,  &params)
+        let res = pagerank_single_node(self, start_node,  &params);
+        res.frequencies
     }
+
+    // todo: node-weights should really be a ref, but pyo3 doesnt like refs to HashMap
+    pub fn psev_estimation(&self, node_weights: HashMap<NodeT, f64>, alpha: f64, iterations: usize, max_walk_length: usize) -> HashMap<NodeT, f64> {
+        
+        // filter out nodes not in the graph
+        let filter_node_weight: HashMap<_,_> = node_weights
+            .into_iter().filter(|(k, _v)| self.get_node_ids().contains(k)).collect();
+
+        // renormalize node_weights (in case they arent)
+        let total: f64 = filter_node_weight.values().sum();
+        let normed_weights: HashMap<NodeT, f64> =filter_node_weight.into_iter().map(|(k, v)| (k, v/total) ).collect();
+
+        let params = PagerankParams::new(alpha, iterations, max_walk_length);
+        let psev = psev_embedding(self, &normed_weights, &params);
+        psev.p
+    }    
 }
