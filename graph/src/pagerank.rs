@@ -6,33 +6,15 @@ use rand::distributions::Distribution;
 use crate::{Graph, NodeT, WalksParameters};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 
-
-/// dummy trait since we cant include from cpu_models
-use core::fmt::Debug;
-trait MyWalkTransformer: Send + Sync + Clone + Debug + Default {
-    type I<'a, T>: IndexedParallelIterator<Item = (usize, Vec<T>)> + 'a
-    where
-        Self: 'a,
-        T: Copy + Send + Sync + 'a;
-
-    fn par_transform_walk<'a, T>(&'a self, i: usize, walk: Vec<T>) -> Self::I<'a, T>
-    where
-        T: Copy + Send + Sync + 'a;
-}
-
-
-/// Transformer that emulate pagerank (i.e. randomly hopping back to the starting node)
-/// This is equivalent to picking a geometriclly distributed walklength.
-#[derive(Debug, Clone, Default)]
-struct PagerankTransformer {
-    alpha: f64,  // prob of continuing the walk (1-teleportation), usually ~0.85
-    // walklength_RV: Geometric,
-}
-unsafe impl Sync for PagerankTransformer {}
-unsafe impl Send for PagerankTransformer {}
-
-
+/// transforming a randon walk to emulate PageRank, i.e. geometrically 
+/// distributed walk_length
+/// 
+/// 1. for each RW, sample its walklength depedning on alpha
+/// 2. prune the RW to that length
+/// 3. return first and last node only
 fn pagerank_transform_rw<T: Copy + Send + Sync>(i: usize, walk: Vec<T>, alpha: f64) -> Vec<(usize, Vec<T>)>{
+    
+
     let mut rng = rand::rngs::OsRng;
     // println!("paralell transform! {i}");
 
@@ -52,11 +34,38 @@ fn pagerank_transform_rw<T: Copy + Send + Sync>(i: usize, walk: Vec<T>, alpha: f
     vec![(i, new_walk)]
 }
 
-impl PagerankTransformer {
-    pub fn new(alpha: f64) -> Self {
-        Self {alpha}
-    }
-}
+
+
+/// dummy trait since we cant include from cpu_models
+use core::fmt::Debug;
+// trait MyWalkTransformer: Send + Sync + Clone + Debug + Default {
+//     type I<'a, T>: IndexedParallelIterator<Item = (usize, Vec<T>)> + 'a
+//     where
+//         Self: 'a,
+//         T: Copy + Send + Sync + 'a;
+
+//     fn par_transform_walk<'a, T>(&'a self, i: usize, walk: Vec<T>) -> Self::I<'a, T>
+//     where
+//         T: Copy + Send + Sync + 'a;
+// }
+
+
+/// Transformer that emulate pagerank (i.e. randomly hopping back to the starting node)
+/// This is equivalent to picking a geometriclly distributed walklength.
+// #[derive(Debug, Clone, Default)]
+// struct PagerankTransformer {
+//     alpha: f64,  // prob of continuing the walk (1-teleportation), usually ~0.85
+//     // walklength_RV: Geometric,
+// }
+// unsafe impl Sync for PagerankTransformer {}
+// unsafe impl Send for PagerankTransformer {}
+
+
+// impl PagerankTransformer {
+//     pub fn new(alpha: f64) -> Self {
+//         Self {alpha}
+//     }
+// }
 
 // impl MyWalkTransformer for PagerankTransformer {
 //     type I<'a, T> = impl IndexedParallelIterator<Item = (usize, Vec<T>)> + 'a where Self: 'a, T: Copy + Send + Sync + 'a;
@@ -99,9 +108,14 @@ impl SparseVector {
 //         self.p.to_object( py )
 //     }
 // }
+
+/// The basic pagerank parameters
 struct PagerankParams {
+    /// exploration probability: 1-teleport
     alpha: f64,
+    /// how many random walks to do to estimate the Pagerank vector
     iterations: usize,
+    /// number of random walk steps to take at most
     max_walk_length: usize
 }
 impl PagerankParams {
@@ -109,6 +123,8 @@ impl PagerankParams {
         Self {alpha, iterations, max_walk_length}
     }
 }
+
+
 struct PagerankResult {
     /// how often was each node visited
     pub frequencies: HashMap<NodeT, usize>
@@ -156,68 +172,49 @@ impl PagerankResult {
 //     freqs
 // }
 
+
+/// Estimates Pagerank starting from a single node `start_node` using random walks
 fn pagerank_single_node(g: &Graph, start_node: NodeT, params: &PagerankParams) -> PagerankResult {
 
     assert!(start_node < g.get_number_of_nodes(), "NodeID not in graph");
-
     let walk_params = WalksParameters::new(params.max_walk_length as u64).unwrap();
-
     let res = g.par_iter_random_walks_singlenode(params.iterations as u32, &walk_params, start_node).unwrap();
 
-    let frequencies = if false {
-        let q = res.map(|x| {
-            let mut r = rand::rngs::OsRng;
-            let walk_length = Geometric::new(1.0-params.alpha).unwrap();
-            let mut l = walk_length.sample(&mut r).ceil() as usize;
-            l -= 1; // as l==1 means we didnt move at all and should return the start node
-            if l >= params.max_walk_length {
-                println!("l: {l} clipped to {}", params.max_walk_length);
-                l = params.max_walk_length -1;  // clipping to max walk length, introducds some bias
-            }   
-            x[l]
-        });
-        let mut end_nodes = Vec::new();
-        q.collect_into_vec(&mut end_nodes);
+    // transform the RWs (picking a gemoetrically distributed walklength)
+    // let pr_transformer = PagerankTransformer::new(params.alpha);
+
+    let pr_walk = res.enumerate().flat_map(|(i, walk)| {
+        // println!("paralell walk! {i}");
+        // pr_transformer.par_transform_walk(i, walk)
+        pagerank_transform_rw(i, walk, params.alpha).into_par_iter()
         
-        let mut frequencies: HashMap<NodeT, usize> = HashMap::new();
-        for n in end_nodes {
-            let v = frequencies.entry(n).or_insert(0);
-            *v += 1;
-        }
-        frequencies
-    } else {
+    });
 
-        // let pr_transformer = PagerankTransformer::new(params.alpha);
+    // from https://stackoverflow.com/questions/70096640/how-can-i-create-a-hashmap-using-rayons-parallel-fold
+    // parallel fold into a Hashmap to count
+    let frequencies: HashMap<NodeT, usize> = pr_walk
+        .fold(HashMap::new, |mut acc, (_i, rw)| {
+            let lastnode = rw.last().unwrap();
+            *acc.entry(*lastnode).or_insert(0) += 1;
+            acc
+        })
+        .reduce_with(|mut m1, m2| {
+            for (k, v) in m2 {
+                *m1.entry(k).or_default() += v;
+            }
+            m1
+        })
+        .unwrap();
 
-        let pr_walk = res.enumerate().flat_map(|(i, walk)| {
-            // println!("paralell walk! {i}");
-            // pr_transformer.par_transform_walk(i, walk)
-            pagerank_transform_rw(i, walk, params.alpha).into_par_iter()
-            
-        });
-
-        // from https://stackoverflow.com/questions/70096640/how-can-i-create-a-hashmap-using-rayons-parallel-fold
-        // parallel fold into a Hashmap to count
-        let frequencies: HashMap<NodeT, usize> = pr_walk
-            .fold(HashMap::new, |mut acc, (_i, rw)| {
-                let lastnode = rw.last().unwrap();
-                *acc.entry(*lastnode).or_insert(0) += 1;
-                acc
-            })
-            .reduce_with(|mut m1, m2| {
-                for (k, v) in m2 {
-                    *m1.entry(k).or_default() += v;
-                }
-                m1
-            })
-            .unwrap();
-
-        frequencies
-    };
     return PagerankResult{ frequencies }
 }
 
-
+/// Estimates the PSEV vector for given node weights.
+/// Essentialyl a linear combination of the nodes' pagerank
+/// 
+/// 1. Do Pagerank for each node -> PR_i
+/// 2. weighted sum across all Pagerank vectors  \sum_i w_i PR_i
+/// 
 fn psev_embedding(g: &Graph, node_weights:  &HashMap<NodeT, f64>, params: &PagerankParams) -> SparseVector {
     
     assert!(node_weights.values().sum::<f64>() == 1.0);
@@ -235,12 +232,14 @@ fn psev_embedding(g: &Graph, node_weights:  &HashMap<NodeT, f64>, params: &Pager
 }
 
 impl Graph {
+    /// Estimate the Pagerank vector of the given `start_node` using random walks.
     pub fn pagerank_single_node(&self, start_node: NodeT, alpha: f64, iterations: usize, max_walk_length: usize) -> HashMap<NodeT, usize> {
         let params = PagerankParams::new(alpha, iterations, max_walk_length);
         let res = pagerank_single_node(self, start_node,  &params);
         res.frequencies
     }
 
+    /// Estimate the PSEV vector of the given `node_weights` using random walks.
     // todo: node-weights should really be a ref, but pyo3 doesnt like refs to HashMap
     pub fn psev_estimation(&self, node_weights: HashMap<NodeT, f64>, alpha: f64, iterations: usize, max_walk_length: usize) -> HashMap<NodeT, f64> {
         
@@ -250,7 +249,7 @@ impl Graph {
 
         // renormalize node_weights (in case they arent)
         let total: f64 = filter_node_weight.values().sum();
-        let normed_weights: HashMap<NodeT, f64> =filter_node_weight.into_iter().map(|(k, v)| (k, v/total) ).collect();
+        let normed_weights: HashMap<NodeT, f64> = filter_node_weight.into_iter().map(|(k, v)| (k, v/total) ).collect();
 
         let params = PagerankParams::new(alpha, iterations, max_walk_length);
         let psev = psev_embedding(self, &normed_weights, &params);
