@@ -169,3 +169,6 @@ mod graphs_from_edge_lists;
 
 mod builder;
 pub use builder::*;
+
+mod from_pq;
+pub use from_pq::*;
