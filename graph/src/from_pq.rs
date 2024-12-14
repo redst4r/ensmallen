@@ -24,12 +24,12 @@ impl Graph {
     /// - make nodetype/edgetype/weight optional: Currently required
     ///   but a pain to implement (getting the types of the if clauses right reuired some dyn)
     pub fn from_parquet(
-        nodes_pq: &str, 
-        edges_pq: &str,
-        nodename_col: &str,
+        nodes_pq: String, 
+        edges_pq: String,
+        nodename_col: String,
         nodetype_col: Option<String>,
-        edge_src_col: &str,
-        edge_dst_col: &str,
+        edge_src_col: String,
+        edge_dst_col: String,
         edge_type_col: Option<String>,
         edge_weight_col: Option<String>,
         directed: bool,
@@ -42,8 +42,8 @@ impl Graph {
 
         assert!(edge_weight_col.is_none(), "edge weights not supported");
 
-        let node_paths = get_parquet_parts(nodes_pq);
-        let edge_paths = get_parquet_parts(edges_pq);
+        let node_paths = get_parquet_parts(&nodes_pq);
+        let edge_paths = get_parquet_parts(&edges_pq);
 
         // =========================================
         // getting the nodes
@@ -185,12 +185,12 @@ fn test_pq(){
     write_edges("/tmp/edges.parquet");
 
     let the_graph = Graph::from_parquet(
-        "/tmp/nodes.parquet", 
-        "/tmp/edges.parquet",
-        "id",
+        "/tmp/nodes.parquet".to_string(), 
+        "/tmp/edges.parquet".to_string(),
+        "id".to_string(),
         Some("category".to_string()),
-        "src",
-        "dst",
+        "src".to_string(),
+        "dst".to_string(),
         Some("edgetype".to_string()),
         None, //Some("weight".to_string()),
         false,
