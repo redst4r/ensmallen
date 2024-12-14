@@ -28,12 +28,12 @@ impl Graph {
         edges_pq: String,
         nodename_col: String,
         nodetype_col: Option<String>,
-        edge_src_col: String,
-        edge_dst_col: String,
+        edge_src_col: Option<String>,
+        edge_dst_col: Option<String>,
         edge_type_col: Option<String>,
         edge_weight_col: Option<String>,
-        directed: bool,
-        name: String
+        directed: Option<bool>,
+        name: Option<String>
     ) -> Graph {
 
         let has_node_types = nodetype_col.is_some();
@@ -41,6 +41,19 @@ impl Graph {
         let has_edge_weights= false;
 
         assert!(edge_weight_col.is_none(), "edge weights not supported");
+        let directed = if let Some(b) = directed {
+            b 
+        } else {
+            false
+        };
+
+        let name = if let Some(b) = name {
+            b 
+        } else {
+            "graph".to_string()
+        };
+        
+
 
         let node_paths = get_parquet_parts(&nodes_pq);
         let edge_paths = get_parquet_parts(&edges_pq);
@@ -86,8 +99,8 @@ impl Graph {
         let edge_schema = parquet_metadata.file_metadata().schema();
 
         let requested_fields = vec![
-            edge_src_col.to_string(), 
-            edge_dst_col.to_string(), 
+            edge_src_col.expect("edge src required").to_string(), 
+            edge_dst_col.expect("edge dst required").to_string(), 
             edge_type_col.expect("edgetyp required").to_string()];
 
         let proj_schema = get_projection_schema(edge_schema, requested_fields);
@@ -189,12 +202,12 @@ fn test_pq(){
         "/tmp/edges.parquet".to_string(),
         "id".to_string(),
         Some("category".to_string()),
-        "src".to_string(),
-        "dst".to_string(),
+        Some("src".to_string()),
+        Some("dst".to_string()),
         Some("edgetype".to_string()),
         None, //Some("weight".to_string()),
-        false,
-        "somename".to_string(),
+        Some(false),
+        Some("somename".to_string()),
     
     );
     println!("{}, {}", the_graph.get_number_of_nodes(), the_graph.get_number_of_edges());
