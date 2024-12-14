@@ -13,11 +13,8 @@ use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterato
 /// 2. prune the RW to that length
 /// 3. return first and last node only
 fn pagerank_transform_rw<T: Copy + Send + Sync>(i: usize, walk: Vec<T>, alpha: f64) -> Vec<(usize, Vec<T>)>{
-    
 
     let mut rng = rand::rngs::OsRng;
-    // println!("paralell transform! {i}");
-
     let walk_length = Geometric::new(1.0-alpha).unwrap();  // todo: move into struct.constructior
     let mut l = walk_length.sample(&mut rng).ceil() as usize;
     l -= 1; // as l==1 means we didnt move at all and should return the start node
@@ -25,7 +22,7 @@ fn pagerank_transform_rw<T: Copy + Send + Sync>(i: usize, walk: Vec<T>, alpha: f
     if l >= walk.len() {
         println!("l: {l} clipped to {}", walk.len());
         l = walk.len() -1;  // clipping to max walk length, introducds some bias
-    }   
+    }
 
     let first_node = walk[0]; // *walk.first().unwrap()
     let last_node = walk[l];
@@ -33,7 +30,6 @@ fn pagerank_transform_rw<T: Copy + Send + Sync>(i: usize, walk: Vec<T>, alpha: f
     let new_walk = vec![first_node, last_node];
     vec![(i, new_walk)]
 }
-
 
 
 /// dummy trait since we cant include from cpu_models
@@ -73,7 +69,7 @@ use core::fmt::Debug;
 //     fn par_transform_walk<'a, T>(&'a self, i: usize, walk: Vec<T>) -> Self::I<'a, T>
 //     where
 //         T: Copy + Send + Sync + 'a,
-//     {   
+//     {
 //         pagerank_transform_rw(i, walk, self.alpha).into_par_iter()
 //     }
 // }
@@ -99,7 +95,7 @@ impl SparseVector {
             let to_update = self.p.entry(k).or_insert(0.0);
             *to_update += v
         }
-    }    
+    }
 }
 
 /// convenience function, return to pyton directly
@@ -187,7 +183,6 @@ fn pagerank_single_node(g: &Graph, start_node: NodeT, params: &PagerankParams) -
         // println!("paralell walk! {i}");
         // pr_transformer.par_transform_walk(i, walk)
         pagerank_transform_rw(i, walk, params.alpha).into_par_iter()
-        
     });
 
     // from https://stackoverflow.com/questions/70096640/how-can-i-create-a-hashmap-using-rayons-parallel-fold
@@ -216,8 +211,13 @@ fn pagerank_single_node(g: &Graph, start_node: NodeT, params: &PagerankParams) -
 /// 2. weighted sum across all Pagerank vectors  \sum_i w_i PR_i
 /// 
 fn psev_embedding(g: &Graph, node_weights:  &HashMap<NodeT, f64>, params: &PagerankParams) -> SparseVector {
-    
-    assert!(node_weights.values().sum::<f64>() == 1.0);
+
+    // assert!(node_weights.values().sum::<f64>() == 1.0);  # hard to float imprecsission
+    let total_sum = node_weights.values().sum::<f64>();
+    if (0.9999999 > total_sum) || (total_sum > 1.0000001) {
+        println!("Warning: weight sum is not 1:  {total_sum}")
+    }
+
     // TODO assert all nodes are in the graph
 
     let mut accumulator = SparseVector::new();
@@ -242,7 +242,7 @@ impl Graph {
     /// Estimate the PSEV vector of the given `node_weights` using random walks.
     // todo: node-weights should really be a ref, but pyo3 doesnt like refs to HashMap
     pub fn psev_estimation(&self, node_weights: HashMap<NodeT, f64>, alpha: f64, iterations: usize, max_walk_length: usize) -> HashMap<NodeT, f64> {
-        
+
         // filter out nodes not in the graph
         let filter_node_weight: HashMap<_,_> = node_weights
             .into_iter().filter(|(k, _v)| self.get_node_ids().contains(k)).collect();
@@ -254,5 +254,32 @@ impl Graph {
         let params = PagerankParams::new(alpha, iterations, max_walk_length);
         let psev = psev_embedding(self, &normed_weights, &params);
         psev.p
-    }    
+    }
+
+    /// Estimate the PSEV vector of the given `node_weights` using random walks.
+    /// Here we use the node-names rather than ids.
+    // todo: node-weights should really be a ref, but pyo3 doesnt like refs to HashMap
+    pub fn psev_estimation_nodenames(&self, node_weights: HashMap<String, f64>, alpha: f64, iterations: usize, max_walk_length: usize) -> HashMap<String, f64> {
+
+        // filter out nodes not in the graph
+        let filter_node_weight: HashMap<_,_> = node_weights
+            .into_iter().filter(|(k, _v)| self.has_node_name(k)).collect();
+
+        // renormalize node_weights (in case they arent)
+        let total: f64 = filter_node_weight.values().sum();
+        let normed_weights: HashMap<String, f64> = filter_node_weight.into_iter().map(|(k, v)| (k, v/total) ).collect();
+
+        // we need the node_ids rather than names though
+        let name_to_id: HashMap<String, NodeT> = self.get_node_names().iter().enumerate().map(|(i, name)| (name.clone(), i as NodeT)).collect();
+        let id_to_name: HashMap<NodeT, String> = self.get_node_names().iter().enumerate().map(|(i, name)| (i as NodeT, name.clone())).collect();
+
+        let normed_weigths_nodeid: HashMap<NodeT, f64>  = normed_weights.iter().map(|(name, weight)| (name_to_id[name], *weight)).collect();
+
+        let params = PagerankParams::new(alpha, iterations, max_walk_length);
+        let psev = psev_embedding(self, &normed_weigths_nodeid, &params);
+
+        //translate back into nodenames
+        let psev_nodenames: HashMap<String, f64> = psev.p.iter().map(|(i, psev)| (id_to_name[i].clone(), *psev)).collect();
+        psev_nodenames
+    }
 }
