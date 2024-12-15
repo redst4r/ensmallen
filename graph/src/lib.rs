@@ -172,3 +172,6 @@ pub use builder::*;
 
 mod from_pq;
 pub use from_pq::*;
+
+mod pagerank;
+pub use pagerank::*;

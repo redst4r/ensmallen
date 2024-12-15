@@ -768,6 +768,50 @@ impl Graph {
     }
 
     #[inline(always)]
+    /// Return vector of walks run on starting from a single node.
+    ///
+    /// # Arguments
+    /// * `quantity`: NodeT - Number of random walk to compute.
+    /// * `parameters`: &'a WalksParameters - the weighted walks parameters.
+    /// * `start_node`: NodeT: the nodeID to start the random walks
+    ///
+    /// # Raises
+    /// * If the graph does not contain edges.
+    /// * If the graph is directed.
+    /// * If the given walks parameters are not compatible with the current graph instance.
+    pub fn par_iter_random_walks_singlenode<'a>(
+        &'a self,
+        quantity: NodeT,
+        parameters: &'a WalksParameters,
+        start_node: NodeT,
+    ) -> Result<impl IndexedParallelIterator<Item = Vec<NodeT>> + 'a> {
+        self.must_have_edges()?;
+
+        // TODO check that the node is in the graph
+        if start_node >= self.get_number_of_nodes() {
+            return Err("NodeID {start_node} not found in graph".to_string())
+        }
+
+        let random_state = splitmix64(parameters.random_state as u64);
+        self.par_iter_walks(
+            quantity,
+            move |index| {
+                // let local_index = index % quantity;
+                let random_source_id = start_node;
+                // let random_source_id = splitmix64(
+                    // (random_state + local_index as u64).wrapping_add(0x4cc4854c0155130a),
+                // ) as NodeT;
+                (splitmix64(random_state + index as u64), unsafe {
+                    self.get_unchecked_unique_source_node_id(
+                        random_source_id % self.get_number_of_unique_source_nodes(),  // todo not needed
+                    )
+                })
+            },
+            parameters,
+        )
+    }
+
+    #[inline(always)]
     /// Return vector of walks run on a random subset of the not trap nodes.
     ///
     /// # Arguments
