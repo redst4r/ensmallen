@@ -2,7 +2,10 @@
     // Where the final wheels, and the tmp building folders will, be
     "wheels_folder":"wheels", 
     // flags passed to RUSTFLAGS to all targets
-    "shared_rustflags":"-C inline-threshold=1000",
+    // TODO deprecated
+    //"shared_rustflags":"-C inline-threshold=1000",  
+    "shared_rustflags":"-Cllvm-args=--inline-threshold=1000", 
+    
     // List of the different libraries that will be compiled
     // In the resulting wheel the different targets will be
     // like `ensmallen_{target}_{complation_infos}.{extension}` so that they can
@@ -34,20 +37,21 @@
                 "build_dir":"build_core2",
                 "rustflags":"-C target-cpu=core2"
             }
-        },
-		// Cross compile linux for docker on mac M1
-		"aarch64":{
-			"default":{
-				"build_dir":"build_aarch64_default",
-				"rustflags":"-C target-cpu=apple-m1"
-			}
-		},
-		// mac M1
-        "arm64":{
-            "default":{
-                "build_dir":"build_arm_default",
-                "rustflags":"-C target-cpu=apple-m1"
-            }
         }
+        // },
+		// // Cross compile linux for docker on mac M1
+		// "aarch64":{
+		// 	"default":{
+		// 		"build_dir":"build_aarch64_default",
+		// 		"rustflags":"-C target-cpu=apple-m1"
+		// 	}
+		// },
+		// // mac M1
+        // "arm64":{
+        //     "default":{
+        //         "build_dir":"build_arm_default",
+        //         "rustflags":"-C target-cpu=apple-m1"
+        //     }
+        // }
     }
 }
