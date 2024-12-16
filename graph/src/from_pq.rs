@@ -6,7 +6,7 @@ use parquet::file::reader::{FileReader, SerializedFileReader};
 use parquet::record::reader::RowIter;
 use parquet::schema::types::Type;
 use std::convert::TryFrom;
-use std::fs::{self, File};
+use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 use parquet::basic::Compression;
@@ -15,6 +15,36 @@ use crate::Graph;
 use crate::ItersWrapper;
 use rayon::iter::Empty as ParEmpty;
 use std::iter::Empty as SeqEmpty;
+
+/// Parquet, spread over one or multiple files
+struct ParquetDataset {
+    paths: Vec<String>
+}
+impl ParquetDataset {
+    /// get the parquet schema (based on the first file)
+    pub fn get_schema(&self) -> Type {
+        get_schema(&self.paths[0])
+    }
+
+    /// build a parquet dataset (either a single pq file or a directory of multiple parquet files)
+    pub fn new(path: &str) -> Self    {
+        let paths = get_parquet_parts(path);
+        Self { paths }
+    }
+
+    /// iterate over the rows, returning a subset of columns (as specified by `schema`)
+    pub fn iter_rows(&self, schema: Type) -> impl Iterator<Item = Vec<String>> + use<'_> {
+        multifile_iter(&self.paths, schema)
+    }
+}
+
+
+/// get the schema from a parquet file
+fn get_schema(path: &str) -> Type {
+    let reader = SerializedFileReader::new(File::open(path).unwrap()).unwrap();
+    let parquet_metadata = reader.metadata();
+    parquet_metadata.file_metadata().schema().clone()
+}
 
 impl Graph {
 
@@ -27,9 +57,9 @@ impl Graph {
         nodes_pq: String, 
         edges_pq: String,
         nodename_col: String,
+        edge_src_col: String,
+        edge_dst_col: String,
         nodetype_col: Option<String>,
-        edge_src_col: Option<String>,
-        edge_dst_col: Option<String>,
         edge_type_col: Option<String>,
         edge_weight_col: Option<String>,
         directed: Option<bool>,
@@ -41,44 +71,34 @@ impl Graph {
         let has_edge_weights= false;
 
         assert!(edge_weight_col.is_none(), "edge weights not supported");
-        let directed = if let Some(b) = directed {
-            b 
-        } else {
-            false
-        };
 
-        let name = if let Some(b) = name {
-            b 
-        } else {
-            "graph".to_string()
-        };
-        
+        // curretnyl optional arguments
+        let directed = directed.unwrap_or(false);
+        let name = name.unwrap_or("graph".to_string());
 
-
-        let node_paths = get_parquet_parts(&nodes_pq);
-        let edge_paths = get_parquet_parts(&edges_pq);
+        let nodes_pq = ParquetDataset::new(&nodes_pq);
+        let edges_pq = ParquetDataset::new(&edges_pq);
 
         // =========================================
         // getting the nodes
         // =========================================
         // just to get the schema, peek into the first file
-        let reader = SerializedFileReader::new(File::open(node_paths[0].clone()).unwrap()).unwrap();
-        let parquet_metadata = reader.metadata();
-        let node_schema = parquet_metadata.file_metadata().schema();
-        
-
+        let node_schema = nodes_pq.get_schema();
         let requested_fields = vec![nodename_col.to_string(), nodetype_col.expect("nodetype required").to_string()];
-        let proj_schema = get_projection_schema(node_schema, requested_fields);
+        let proj_schema = get_projection_schema(&node_schema, requested_fields);
 
         // construct the node iterator: its pretty simply, but
         // the way its fed into ensamallen is convoluted:
         // each node is a Ok(counter,(nodestr, Option(vec[nodetype])))
-        // let node_paths = vec![nodes_pq.to_string()];
-        let it = multifile_iter(&node_paths, proj_schema);
+        let q = nodes_pq.iter_rows(proj_schema)
+            .map(|mut cols|{
+            // let nodename = cols[0].clone();
+            // let nodetype = cols[1].clone();
 
-        let q = it.map(|cols|{
-            let nodename = cols[0].clone();
-            let nodetype = cols[1].clone();
+            //without cloning, remember: pop removes the last el
+            let nodetype = cols.pop().expect("couldnt pop nodetype");
+            let nodename = cols.pop().expect("couldnt pop nodename");
+
             (nodename, Some(vec![nodetype]))  // ensmallens weird format, nodetype is an option of multiple nodetypes
         })
             // .zip(std::iter::repeat(None)) //empty nodetype
@@ -89,28 +109,27 @@ impl Graph {
             ItersWrapper::<_, _, ParEmpty<_>>::Sequential(q)
         );
 
-
         // =========================================
         // getting the edges
         // =========================================
-
-        let reader = SerializedFileReader::new(File::open(edge_paths[0].clone()).unwrap()).unwrap();
-        let parquet_metadata = reader.metadata();
-        let edge_schema = parquet_metadata.file_metadata().schema();
+        let edge_schema = edges_pq.get_schema();
 
         let requested_fields = vec![
-            edge_src_col.expect("edge src required").to_string(), 
-            edge_dst_col.expect("edge dst required").to_string(), 
+            edge_src_col.to_string(), 
+            edge_dst_col.to_string(), 
             edge_type_col.expect("edgetyp required").to_string()];
 
-        let proj_schema = get_projection_schema(edge_schema, requested_fields);
-        // let edge_paths = vec![edges_pq.to_string()];
-        let it_ed = multifile_iter(&edge_paths, proj_schema);
-        let qw = it_ed
-             .map(|x| {
-                let src_name = x[0].clone();
-                let dst_name = x[1].clone();
-                let edgetype = x[2].clone();
+        let proj_schema = get_projection_schema(&edge_schema, requested_fields);
+        let qw = edges_pq.iter_rows(proj_schema)
+             .map(|mut x| {
+                // let src_name = x[0].clone();
+                // let dst_name = x[1].clone();
+                // let edgetype = x[2].clone();
+                //without cloning, remember: pop removes the last el
+
+                let edgetype = x.pop().expect("missing edgetype");
+                let dst_name = x.pop().expect("missing dst name");
+                let src_name = x.pop().expect("missing src came");
                 let the_weight = 1.0f32;
                 // let the_weight = weight.parse::<WeightT>().unwrap();
                 (src_name, dst_name, Some(edgetype), the_weight)
@@ -171,18 +190,11 @@ fn get_parquet_parts(pathname: &str) -> Vec<String> {
     } else {  // otherwise iter through the directory, picking up any .parquet files
 
         let paths = p.read_dir().expect("read_dir failed");
-        let x: Vec<_> = paths.into_iter().filter_map(|path|
-            { 
+        let x: Vec<_> = paths.into_iter().filter_map(|path| { 
                 let p = path.unwrap().path();
-                
-                if let Some(extension) = p.extension()  {  // since some dont even have an extension
-                    if extension =="parquet" {
-                        Some(p.display().to_string())
-                    } else {
-                        None   // skip via filtermap
-                    }                
-                } else {
-                    None   // skip via filtermap
+                match p.extension() {
+                    Some(os_str) if os_str == "parquet" => Some(p.display().to_string()),
+                    _ => None
                 }
             }).collect();
         x
@@ -190,10 +202,8 @@ fn get_parquet_parts(pathname: &str) -> Vec<String> {
 }
 
 
-
 #[test]
 fn test_pq(){
-
     write_nodes("/tmp/nodes.parquet");
     write_edges("/tmp/edges.parquet");
 
@@ -201,9 +211,9 @@ fn test_pq(){
         "/tmp/nodes.parquet".to_string(), 
         "/tmp/edges.parquet".to_string(),
         "id".to_string(),
+        "src".to_string(),
+        "dst".to_string(),
         Some("category".to_string()),
-        Some("src".to_string()),
-        Some("dst".to_string()),
         Some("edgetype".to_string()),
         None, //Some("weight".to_string()),
         Some(false),
@@ -218,8 +228,6 @@ fn test_pq(){
     println!("CCs {:?}", the_graph.get_number_of_connected_components(Some(true)));
     println!("CCs {:?}", the_graph.get_edge_type_names_counts_hashmap());
     println!("CCs {:?}", the_graph.get_node_type_names_counts_hashmap());
-
-
 }
 
 /// iterating over a parquet dataset spread over multiple files. EFor simplicity each row is represented as Vec<String> 
