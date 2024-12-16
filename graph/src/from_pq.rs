@@ -21,15 +21,18 @@ struct ParquetDataset {
     paths: Vec<String>
 }
 impl ParquetDataset {
+    /// get the parquet schema (based on the first file)
     pub fn get_schema(&self) -> Type {
         get_schema(&self.paths[0])
     }
 
+    /// build a parquet dataset (either a single pq file or a directory of multiple parquet files)
     pub fn new(path: &str) -> Self    {
         let paths = get_parquet_parts(path);
         Self { paths }
     }
 
+    /// iterate over the rows, returning a subset of columns (as specified by `schema`)
     pub fn iter_rows(&self, schema: Type) -> impl Iterator<Item = Vec<String>> + use<'_> {
         multifile_iter(&self.paths, schema)
     }
@@ -54,9 +57,9 @@ impl Graph {
         nodes_pq: String, 
         edges_pq: String,
         nodename_col: String,
+        edge_src_col: String,
+        edge_dst_col: String,
         nodetype_col: Option<String>,
-        edge_src_col: Option<String>,
-        edge_dst_col: Option<String>,
         edge_type_col: Option<String>,
         edge_weight_col: Option<String>,
         directed: Option<bool>,
@@ -68,17 +71,10 @@ impl Graph {
         let has_edge_weights= false;
 
         assert!(edge_weight_col.is_none(), "edge weights not supported");
-        let directed = if let Some(b) = directed {
-            b 
-        } else {
-            false
-        };
 
-        let name = if let Some(b) = name {
-            b 
-        } else {
-            "graph".to_string()
-        };
+        // curretnyl optional arguments
+        let directed = directed.unwrap_or(false);
+        let name = name.unwrap_or("graph".to_string());
 
         let nodes_pq = ParquetDataset::new(&nodes_pq);
         let edges_pq = ParquetDataset::new(&edges_pq);
@@ -113,15 +109,14 @@ impl Graph {
             ItersWrapper::<_, _, ParEmpty<_>>::Sequential(q)
         );
 
-
         // =========================================
         // getting the edges
         // =========================================
         let edge_schema = edges_pq.get_schema();
 
         let requested_fields = vec![
-            edge_src_col.expect("edge src required").to_string(), 
-            edge_dst_col.expect("edge dst required").to_string(), 
+            edge_src_col.to_string(), 
+            edge_dst_col.to_string(), 
             edge_type_col.expect("edgetyp required").to_string()];
 
         let proj_schema = get_projection_schema(&edge_schema, requested_fields);
@@ -207,10 +202,8 @@ fn get_parquet_parts(pathname: &str) -> Vec<String> {
 }
 
 
-
 #[test]
 fn test_pq(){
-
     write_nodes("/tmp/nodes.parquet");
     write_edges("/tmp/edges.parquet");
 
@@ -218,9 +211,9 @@ fn test_pq(){
         "/tmp/nodes.parquet".to_string(), 
         "/tmp/edges.parquet".to_string(),
         "id".to_string(),
+        "src".to_string(),
+        "dst".to_string(),
         Some("category".to_string()),
-        Some("src".to_string()),
-        Some("dst".to_string()),
         Some("edgetype".to_string()),
         None, //Some("weight".to_string()),
         Some(false),
@@ -235,8 +228,6 @@ fn test_pq(){
     println!("CCs {:?}", the_graph.get_number_of_connected_components(Some(true)));
     println!("CCs {:?}", the_graph.get_edge_type_names_counts_hashmap());
     println!("CCs {:?}", the_graph.get_node_type_names_counts_hashmap());
-
-
 }
 
 /// iterating over a parquet dataset spread over multiple files. EFor simplicity each row is represented as Vec<String> 
