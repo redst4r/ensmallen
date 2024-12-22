@@ -1,15 +1,14 @@
 use std::collections::HashMap;
-use indicatif::{ProgressBar, ProgressStyle};
 use statrs::distribution::Geometric;
 use rand::distributions::Distribution;
 
 use crate::{Graph, NodeT, WalksParameters};
-use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
+use rayon::iter::{IndexedParallelIterator, ParallelIterator};
 
-/// transforming a randon walk to emulate PageRank, i.e. geometrically 
+/// transforming a random walk to emulate PageRank, i.e. geometrically 
 /// distributed walk_length
 /// 
-/// 1. for each RW, sample its walklength depedning on alpha
+/// 1. for each RW, sample its walklength depending on alpha
 /// 2. prune the RW to that length
 /// 3. return first and last node only
 fn pagerank_transform_rw<T: Copy + Send + Sync>(i: usize, walk: Vec<T>, alpha: f64) -> Vec<(usize, Vec<T>)>{
@@ -31,50 +30,8 @@ fn pagerank_transform_rw<T: Copy + Send + Sync>(i: usize, walk: Vec<T>, alpha: f
     vec![(i, new_walk)]
 }
 
+// use core::fmt::Debug;
 
-/// dummy trait since we cant include from cpu_models
-use core::fmt::Debug;
-// trait MyWalkTransformer: Send + Sync + Clone + Debug + Default {
-//     type I<'a, T>: IndexedParallelIterator<Item = (usize, Vec<T>)> + 'a
-//     where
-//         Self: 'a,
-//         T: Copy + Send + Sync + 'a;
-
-//     fn par_transform_walk<'a, T>(&'a self, i: usize, walk: Vec<T>) -> Self::I<'a, T>
-//     where
-//         T: Copy + Send + Sync + 'a;
-// }
-
-
-/// Transformer that emulate pagerank (i.e. randomly hopping back to the starting node)
-/// This is equivalent to picking a geometriclly distributed walklength.
-// #[derive(Debug, Clone, Default)]
-// struct PagerankTransformer {
-//     alpha: f64,  // prob of continuing the walk (1-teleportation), usually ~0.85
-//     // walklength_RV: Geometric,
-// }
-// unsafe impl Sync for PagerankTransformer {}
-// unsafe impl Send for PagerankTransformer {}
-
-
-// impl PagerankTransformer {
-//     pub fn new(alpha: f64) -> Self {
-//         Self {alpha}
-//     }
-// }
-
-// impl MyWalkTransformer for PagerankTransformer {
-//     type I<'a, T> = impl IndexedParallelIterator<Item = (usize, Vec<T>)> + 'a where Self: 'a, T: Copy + Send + Sync + 'a;
-
-//     fn par_transform_walk<'a, T>(&'a self, i: usize, walk: Vec<T>) -> Self::I<'a, T>
-//     where
-//         T: Copy + Send + Sync + 'a,
-//     {
-//         pagerank_transform_rw(i, walk, self.alpha).into_par_iter()
-//     }
-// }
-
-// use rand::prelude::*;
 #[derive(Debug, Clone, Default)]
 struct SparseVector {
     pub p: HashMap<NodeT, f64>
@@ -85,11 +42,13 @@ impl SparseVector {
         Self {p: HashMap::new() }
     }
 
+    // scalar multiplication of each component
     pub fn multiply_constant(&mut self, alpha: f64){
         for (_k, v) in self.p.iter_mut() {
             *v *= alpha; 
         }
     }
+    // elementwise addition
     pub fn add(&mut self, other: Self){
         for (k, v) in other.p {
             let to_update = self.p.entry(k).or_insert(0.0);
@@ -115,7 +74,7 @@ struct PagerankParams {
     max_walk_length: usize
 }
 impl PagerankParams {
-    pub fn new(    alpha: f64,iterations: usize, max_walk_length: usize) -> Self {
+    pub fn new(alpha: f64,iterations: usize, max_walk_length: usize) -> Self {
         Self {alpha, iterations, max_walk_length}
     }
 }
@@ -182,7 +141,7 @@ fn pagerank_single_node(g: &Graph, start_node: NodeT, params: &PagerankParams) -
     let pr_walk = res.enumerate().flat_map(|(i, walk)| {
         // println!("paralell walk! {i}");
         // pr_transformer.par_transform_walk(i, walk)
-        pagerank_transform_rw(i, walk, params.alpha).into_par_iter()
+        pagerank_transform_rw(i, walk, params.alpha) //.into_par_iter()
     });
 
     // from https://stackoverflow.com/questions/70096640/how-can-i-create-a-hashmap-using-rayons-parallel-fold
@@ -201,7 +160,7 @@ fn pagerank_single_node(g: &Graph, start_node: NodeT, params: &PagerankParams) -
         })
         .unwrap();
 
-    return PagerankResult{ frequencies }
+    PagerankResult{ frequencies }
 }
 
 /// Estimates the PSEV vector for given node weights.
@@ -214,7 +173,7 @@ fn psev_embedding(g: &Graph, node_weights:  &HashMap<NodeT, f64>, params: &Pager
 
     // assert!(node_weights.values().sum::<f64>() == 1.0);  # hard to float imprecsission
     let total_sum = node_weights.values().sum::<f64>();
-    if (0.9999999 > total_sum) || (total_sum > 1.0000001) {
+    if !(0.9999999..=1.0000001).contains(&total_sum) {
         println!("Warning: weight sum is not 1:  {total_sum}")
     }
 
