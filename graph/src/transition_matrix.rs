@@ -7,8 +7,9 @@ use rayon::iter::{IndexedParallelIterator, ParallelIterator};
 use std::{
     collections::HashMap,
 };
+use super::types::{Result};
 
-use crate::{EdgeTypeT, Graph, GraphBuilder, NodeT, WalksParameters};
+use crate::{EdgeT, EdgeTypeT, Graph, GraphBuilder, NodeT, WalksParameters};
 
 /// Edgetype Transition matrix
 ///
@@ -30,13 +31,15 @@ impl EdgetypeTransitionMatrix {
 
         let default_value = 0.0;
         let matrix = Array2::from_elem((n, n), default_value);
-        Self::from_matrix(matrix, edgetypes)
+        Self::from_matrix(matrix, edgetypes).expect("cant fail as all values are ==0")
     }
 
-    pub fn from_matrix(matrix: Array2<f32>, edgetypes: Vec<EdgeTypeT>) -> Self {
+    pub fn from_matrix(matrix: Array2<f32>, edgetypes: Vec<EdgeTypeT>) -> Result<Self> {
         let n = edgetypes.len();
-
-        assert_eq!(n, matrix.shape()[0]);
+        if matrix.shape() != [n, n] {
+            return Err("wrong matrix shape; needs to match length of edgetypes".to_string())
+        }
+        // assert_eq!(n, [0]);
         assert_eq!(n, matrix.shape()[1]);
 
         let type_to_index: HashMap<EdgeTypeT, usize> = edgetypes
@@ -45,10 +48,16 @@ impl EdgetypeTransitionMatrix {
             .map(|(i, et)| (*et, i))
             .collect();
 
-        Self {
-            edgetypes,
-            type_to_index,
-            matrix,
+        // ensure all weights are in [0,1]
+        // TODO check that its a stochastic matrix! (not really enforced in dreamwalk though)
+        if matrix.iter().all(|x| *x >= 0.0 && *x <= 1.0) {
+            Ok(Self {
+                edgetypes,
+                type_to_index,
+                matrix,
+            })
+        } else {
+            Err("some values were outside [0,1]".to_string())
         }
     }
 
@@ -91,8 +100,23 @@ impl EdgetypeTransitionMatrix {
         // values range from [-1, 1], but we want proabilities
         // thats why the authors shove the whole matrix trough a sigmoid, converting everything to [0,1]
         let transition = corr.mapv(sigmoid);
-        Self::from_matrix(transition, ets)
+        Self::from_matrix(transition, ets).expect("all values need to be in [0,1], should be the case with sigmoid!")
     }
+}
+
+/// for a walk (sequence of nodes), retrieve the sequence of edgetypes it traverses
+/// TODO: tests
+/// - empty walk
+/// - walk with single node
+fn walk_to_edgetype_sequence(walk: &[NodeT], graph: &Graph) -> Vec<EdgeTypeT>{
+
+    let ets = (&*graph.edge_types).as_ref().unwrap();  // to get the edge types
+
+    let eseq: Vec<EdgeTypeT> = walk.iter().tuple_windows()
+         .map(|(src, dst)|  graph.get_edge_id_from_node_ids(*src, *dst).unwrap())
+         .map(|edge_id| ets.ids[edge_id as usize].unwrap())
+         .collect();
+    eseq
 }
 
 /// Count frequency of edgetypes in each walk
@@ -105,11 +129,8 @@ fn walks_to_edgetype_frequencies(walks: Vec<Vec<NodeT>>, graph: &Graph) -> (Vec<
     let mut row_list: Vec<Vec<usize>> = Vec::new();
     let mut counter: HashMap<EdgeTypeT, usize> = HashMap::new();
     if let Some(ets) = &*graph.edge_types {
-        // graph.get
         for walk in walks {
-            for (src, dst) in walk.iter().tuple_windows() {
-                let edge_id = graph.get_edge_id_from_node_ids(*src, *dst).unwrap();
-                let et = ets.ids[edge_id as usize].unwrap();
+            for et in walk_to_edgetype_sequence(&walk, graph) {
                 let val = counter.entry(et).or_insert(0);
                 *val += 1;
             }
@@ -179,6 +200,34 @@ fn get_dummy_graph() -> Graph {
     .unwrap();
     gb.build().unwrap()
 }
+
+/// just a triangle graph with two different edge types
+fn get_triangle_graph_three_types() -> Graph {
+    let mut gb = GraphBuilder::new(Some("name".to_string()), Some(false));
+    gb.add_edge(
+        "0".to_string(),
+        "1".to_string(),
+        Some("A".to_string()),
+        Some(1.0),
+    )
+    .unwrap();
+    gb.add_edge(
+        "1".to_string(),
+        "2".to_string(),
+        Some("B".to_string()),
+        Some(1.0),
+    )
+    .unwrap();
+    gb.add_edge(
+        "2".to_string(),
+        "0".to_string(),
+        Some("C".to_string()),
+        Some(1.0),
+    )
+    .unwrap();
+    gb.build().unwrap()
+}
+
 
 fn load_big_graph() -> Graph {
     let nodes_pq = "/home/michi/postdoc_seattle/spoke-ingestion_kedro/data/02_intermediate/graphs/spoke_graph_genegene_augmented/nodes/part-0.parquet";
@@ -263,16 +312,16 @@ mod tests {
 
     #[test]
     /// what happens if theres only a single edge type
-    fn test_matrix_from_walks_single_edge_type() {
+    fn test_walks_to_edgetype_frequencies() {
         let graph = get_dummy_graph();
-        let walks = vec![vec![1, 2, 1], vec![2, 0, 2]];
+        let walks = vec![
+            vec![1, 2, 1], 
+            vec![2, 0, 2]];
         let (_, vvv) = walks_to_edgetype_frequencies(walks, &graph);
 
         assert_eq!(Array::from_vec(vec![0, 2]), vvv.slice(s![0, ..]));
         assert_eq!(Array::from_vec(vec![0, 2]), vvv.slice(s![1, ..]));
-        for v in vvv {
-            println!("{v:?}");
-        }
+        println!("{vvv}");
     }
 
     #[test]
@@ -288,4 +337,14 @@ mod tests {
         assert_eq!(e.get_probability(10, 10), 1.0);
         assert_eq!(e.get_probability(20, 10), 10.0);
     }
+
+    #[test]
+    fn test_edgetype_matrix_all_probabilities() {
+        let arr = Array2::from_shape_vec((2,2), vec![0.0,1.0,0.4,0.5]).unwrap();
+        assert!(EdgetypeTransitionMatrix::from_matrix(arr, vec![10, 20]).is_ok());
+
+        let arr = Array2::from_shape_vec((2,2), vec![0.0,0.,0.0,1.1]).unwrap();
+        assert!(EdgetypeTransitionMatrix::from_matrix(arr, vec![10, 20]).is_err());
+    }
 }
+
