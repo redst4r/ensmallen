@@ -175,3 +175,6 @@ pub use from_pq::*;
 
 mod pagerank;
 pub use pagerank::*;
+
+mod transition_matrix;
+pub use transition_matrix::*;

@@ -1,4 +1,5 @@
 use super::*;
+use super::transition_matrix;
 
 #[derive(Clone, Debug, PartialEq)]
 /// Struct to wrap walk weights.
@@ -8,6 +9,7 @@ pub struct WalkWeights {
     pub(crate) explore_weight: ParamsT,
     pub(crate) change_node_type_weight: ParamsT,
     pub(crate) change_edge_type_weight: ParamsT,
+    pub(crate) edgetype_transition_matrix: Option<transition_matrix::EdgetypeTransitionMatrix>
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -39,6 +41,7 @@ impl Default for WalkWeights {
             explore_weight: 1.0,
             change_node_type_weight: 1.0,
             change_edge_type_weight: 1.0,
+            edgetype_transition_matrix: None, // transition matrix
         }
     }
 }
@@ -84,7 +87,7 @@ impl WalkWeights {
             self.explore_weight,
         ]
         .iter()
-        .all(|weight| !not_one(*weight))
+        .all(|weight| !not_one(*weight)) && !self.is_dream_walk()
     }
 
     /// Return boolean value representing if walk is a Node2Vec walk.
@@ -101,6 +104,13 @@ impl WalkWeights {
         [self.return_weight, self.explore_weight]
             .iter()
             .any(|weight| not_one(*weight))
+        && !self.is_dream_walk()  // check that transition matrix is uniform
+    }
+
+    /// Check if an Edgetype Transition matrix is present, indicating a DreamWalk
+    pub fn is_dream_walk(&self) -> bool {
+        // TODO: better check that transition matrix is uniform
+        self.edgetype_transition_matrix.is_some()
     }
 }
 
@@ -165,6 +175,10 @@ impl SingleWalkParameters {
     /// ```
     pub fn is_node2vec_walk(&self) -> bool {
         self.weights.is_node2vec_walk()
+    }
+
+    pub fn is_dreamwalk_walk(&self) -> bool {
+        self.weights.is_dream_walk()
     }
 }
 
@@ -448,6 +462,12 @@ impl WalksParameters {
         Ok(self)
     }
 
+    pub fn set_edgetype_transition_matrix(mut self, etm: EdgetypeTransitionMatrix) -> Result<WalksParameters>{
+        self.single_walk_parameters.weights.edgetype_transition_matrix = Some(etm);
+        Ok(self)
+    }
+
+
     /// Validate for graph.
     ///
     /// Check if walks parameters are compatible with given graph.
@@ -515,5 +535,9 @@ impl WalksParameters {
     /// ```
     pub fn is_node2vec_walk(&self) -> bool {
         self.single_walk_parameters.is_node2vec_walk()
+    }
+
+    pub fn is_dreamwalk_walk(&self) -> bool {
+        self.single_walk_parameters.is_dreamwalk_walk()
     }
 }

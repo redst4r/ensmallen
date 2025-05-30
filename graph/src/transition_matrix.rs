@@ -348,3 +348,40 @@ mod tests {
     }
 }
 
+
+/// transition matrix that cycles through all edge types
+/// i.e. in the graph we go in a loop around the triangle
+/// n0 -A->n1-B->n2-C->n0 ...
+/// 
+/// Note: hard to test, as sometimes we get in places where there's no allowed movde:
+/// 1. the first edge is pretty much random (it can follow the ET pattern, since there is no prev edge)
+/// 2. we might have taken edge C but goign from n0-C->n2; now we're stuck in node n2 (the et-matrix dicates the C needs to be followed by A, but theres no A edge out of n2)
+#[test]
+fn test_edgetype_random_walk(){
+    // let graph = load_big_graph();
+    let graph = get_triangle_graph_three_types();
+    let all_edge_types = graph.get_unique_edge_type_ids().unwrap();
+
+
+    let arr = Array2::from_shape_vec(
+        (3,3), 
+        vec![
+            0.0, 1.0, 0.0,
+            0.0, 0.0, 1.0,
+            1.0, 0.0, 0.0,
+        ]).unwrap();
+    let etm = EdgetypeTransitionMatrix::from_matrix(arr, all_edge_types).unwrap();
+    let walk_params = WalksParameters::new(3).unwrap().set_edgetype_transition_matrix(etm).unwrap();
+
+    let res = graph
+        .par_iter_random_walks(7, &walk_params)
+        .unwrap();
+    let walks: Vec<_> = res.enumerate().map(|(_i, walk)| walk).collect();
+
+    for (i,w) in walks.iter().enumerate() {
+        let eseq = walk_to_edgetype_sequence(&w, &graph);
+        println!("{:?}", w)    ;
+        let eseq_names = eseq.iter().map(|x| graph.get_edge_type_name_from_edge_type_id(*x).unwrap()).collect_vec();
+        println!("{i}{:?}", eseq_names)    ;
+    }
+}
