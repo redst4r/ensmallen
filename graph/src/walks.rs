@@ -475,10 +475,15 @@ impl Graph {
         has_selfloop: bool,
         normalize_by_degree: bool,
     ) -> (Vec<WeightT>, EdgeT) {
+
+        // returns the basic edge wegihts for each possible edge
         let mut transition =
             self.get_edge_weighted_transitions(min_edge_id, max_edge_id, probabilistic_indices);
 
         // Compute the transition weights relative to the node weights.
+        //############################################################
+        //# Handling of the change node type parameter               #
+        //############################################################
         self.update_node_transition(
             dst,
             &mut transition,
@@ -575,6 +580,25 @@ impl Graph {
             }
         }*/
 
+        // let x = walk_weights.edgetype_transition_matrix.as_ref().unwrap();        
+        if let Some(matrix) = walk_weights.edgetype_transition_matrix.as_ref() {  // weird as_ref since it complaisn about moving out of shared ref
+
+            let ets = (&*self.edge_types).as_ref().expect("there should be edgetype when we use transition matrix"); // Todo: ?!? &*
+
+            let this_type: Option<EdgeTypeT> = ets.ids[edge_id as usize];
+            transition
+                .iter_mut()
+                .zip(min_edge_id..max_edge_id)
+                .for_each(|(transition_value, next_edge_id)| {
+                    let next_edgetype = ets.ids[next_edge_id as usize];
+                    let multiplier = matrix.get_probability(this_type.unwrap(), next_edgetype.unwrap());
+                    *transition_value *= multiplier;
+                });
+            
+            // let prev_et_name = self.get_edge_type_name_from_edge_type_id(this_type.unwrap()).unwrap();
+            // println!("prev node {}\tprev et {}\t {:?}", dst, prev_et_name, transition);
+        };
+        // TODO: what happens if all transition==0
         (transition, min_edge_id)
     }
 
@@ -913,6 +937,8 @@ impl Graph {
                         parameters.single_walk_parameters.walk_length,
                         &mut walk_buffer,
                     ),
+                    // start at `node`, do a random walk of fixed length (parameters.single_walk_parameters.walk_length)
+                    // and write result in `walk_buffer`
                     false => self.get_unchecked_single_walk_from_slice(
                         node,
                         random_state,
@@ -1076,12 +1102,16 @@ impl Graph {
         parameters: &SingleWalkParameters,
         walk_buffer: &mut [NodeT],
     ) {
+        // this is just a "warmup" of the second-order RW
+        // the first transition has to be first order, there's no previos node
         let (min_edge_id, max_edge_id, destinations, indices) = self
             .get_unchecked_edges_and_destinations_from_source_node_id(
                 parameters.max_neighbours,
                 random_state,
                 node,
             );
+
+        // above we.ve determined POSSIBLE moves, now pick one
         random_state = splitmix64(random_state);
         let (dst, edge) = self.extract_node(
             node,
@@ -1109,8 +1139,14 @@ impl Graph {
         let mut previous_dst = dst;
         let mut previous_edge = edge;
 
+        // up to now, we have moved from
+        // `node` -> `previous_dst` via the `previous_edge`
+        // 
+        // in the next move from `previous_dst`, we'll take into account
+        // the `previous_src` too
         for iteration in 2..parameters.walk_length {
             random_state = splitmix64(random_state);
+            // get new neighbors
             let (min_edge_id, max_edge_id, destinations, indices) = self
                 .get_unchecked_edges_and_destinations_from_source_node_id(
                     parameters.max_neighbours,

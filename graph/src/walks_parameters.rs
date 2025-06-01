@@ -537,6 +537,7 @@ impl WalksParameters {
         self.single_walk_parameters.is_node2vec_walk()
     }
 
+    // checks if edgetype transition matrix is_none()
     pub fn is_dreamwalk_walk(&self) -> bool {
         self.single_walk_parameters.is_dreamwalk_walk()
     }
