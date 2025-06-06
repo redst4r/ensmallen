@@ -1,3 +1,5 @@
+use std::u64;
+
 use super::*;
 use rayon::prelude::*;
 use vec_rand::sample_f32 as sample;
@@ -580,21 +582,26 @@ impl Graph {
             }
         }*/
 
-        // let x = walk_weights.edgetype_transition_matrix.as_ref().unwrap();        
         if let Some(matrix) = walk_weights.edgetype_transition_matrix.as_ref() {  // weird as_ref since it complaisn about moving out of shared ref
 
             let ets = (&*self.edge_types).as_ref().expect("there should be edgetype when we use transition matrix"); // Todo: ?!? &*
 
-            let this_type: Option<EdgeTypeT> = ets.ids[edge_id as usize];
-            transition
-                .iter_mut()
-                .zip(min_edge_id..max_edge_id)
-                .for_each(|(transition_value, next_edge_id)| {
-                    let next_edgetype = ets.ids[next_edge_id as usize];
-                    let multiplier = matrix.get_probability(this_type.unwrap(), next_edgetype.unwrap());
-                    *transition_value *= multiplier;
-                });
-            
+            // try to get an edgetype for the prev edge
+            if let Some(this_type) = ets.ids.get(edge_id as usize) {
+                // let this_type: Option<EdgeTypeT> = ets.ids[edge_id as usize];
+                transition
+                    .iter_mut()
+                    .zip(min_edge_id..max_edge_id)
+                    .for_each(|(transition_value, next_edge_id)| {
+                        let next_edgetype = ets.ids[next_edge_id as usize];
+                        let multiplier = matrix.get_probability(this_type.unwrap(), next_edgetype.unwrap());
+                        *transition_value *= multiplier;
+                    });
+            } else {
+                // println!("{transition:?} {src} {dst}, {min_edge_id} {max_edge_id}");
+                // couldn't get the prev edgetype; this SHOULD ONLY happen if the last move was a teleport, which we indicate with u64::MAX!
+                assert_eq!(edge_id, u64::MAX);
+            }
             // let prev_et_name = self.get_edge_type_name_from_edge_type_id(this_type.unwrap()).unwrap();
             // println!("prev node {}\tprev et {}\t {:?}", dst, prev_et_name, transition);
         };
@@ -1140,7 +1147,7 @@ impl Graph {
         let mut previous_edge = edge;
 
         // up to now, we have moved from
-        // `node` -> `previous_dst` via the `previous_edge`
+        // `previous_src` -> `previous_dst` via the `previous_edge`
         // 
         // in the next move from `previous_dst`, we'll take into account
         // the `previous_src` too
