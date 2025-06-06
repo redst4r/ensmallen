@@ -178,3 +178,6 @@ pub use pagerank::*;
 
 mod transition_matrix;
 pub use transition_matrix::*;
+
+mod teleport;
+pub use teleport::*;

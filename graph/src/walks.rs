@@ -1090,6 +1090,46 @@ impl Graph {
         }
     }
 
+
+    /// determine if a teleport is to be done, and if so, pick a teleport target
+    /// 
+    /// returns None if there's
+    /// - no teleports allowed by the WalkParamters
+    /// - no teleport possible (the nodetype is not allowed to teleport)
+    /// -teleport allowed, but wasn't executed (since we only do it with a certain probability)
+    fn roll_teleport(&self, node: NodeT, mut random_state: u64, parameters: &SingleWalkParameters,) -> Option<NodeT>{
+
+        if let Some(tele_params) = &parameters.weights.teleport_params {
+            let tau = tele_params.teleport_probability; //prob to do a teleport
+            let r = sample(&mut [tau, 1.0-tau], random_state);
+            if r == 0 {  // try to teleport
+
+                // get nodetype
+                let ets = (&*self.node_types).as_ref().expect("there should be nodetypes when we use teleport matrix"); // Todo: ?!? &*
+                
+                // just a weird convoluted way to get the nodetype
+                let nodetype: NodeTypeT = match &ets.ids[node as usize] {  //Option<Vec<NodeTypeT>>
+                    Some(nodetypes) => nodetypes[0], // TODO what if multiple nodetypes are used
+                    None => panic!() // cant happen
+                };
+
+                let random_state = splitmix64(random_state);
+
+                // attempt teleport, might fail if the nodetype is not `teleportable`
+                if let Ok(teleport_target) = tele_params.teleport_matrix.sample_teleport(node, nodetype, random_state) {
+                    Some(teleport_target)
+                } else {
+                    None
+                }
+            } else { // no teleport
+                None
+            }
+        } else {  //no teleports allows in the walkparams
+            None
+        }
+
+    }
+
     /// Returns single walk from given node.
     ///
     /// This method assumes that there are no traps in the graph.
@@ -1161,31 +1201,54 @@ impl Graph {
                     previous_dst,
                 );
             random_state = splitmix64(random_state);
-            let (dst, edge) = self.extract_edge(
-                previous_src,
-                previous_dst,
-                previous_edge,
-                random_state,
-                &parameters.weights,
-                min_edge_id,
-                max_edge_id,
-                self.get_destinations_slice(min_edge_id, max_edge_id, &destinations),
-                self.get_destinations_slice(
-                    previous_min_edge_id,
-                    previous_max_edge_id,
-                    &previous_destinations,
-                ),
-                &indices,
-                parameters.normalize_by_degree,
-            );
+            // teleport or local move?
+            if let Some(dst) = self.roll_teleport(previous_dst, random_state, parameters) {
+                // things get a bit odd after a teleport since there's no direct edge between 
+                // `previous_dst` and `dst`
+                // just set it to the max value, guaraneeting there's no edge in the graph; lets hope this doenst crash things
+                // Might be a problem for the edgetype transition matrix for the move AFTER teleport
+                let edge = u64::MAX;  
+                
+                // the neighbors of the pre-teleport node
+                previous_min_edge_id = min_edge_id;
+                previous_max_edge_id = max_edge_id;
+                previous_destinations = destinations;
+                previous_src = previous_dst;
+                previous_dst = dst;
+                previous_edge = edge;
+                *walk_buffer.get_unchecked_mut(iteration as usize) = dst; 
 
-            previous_min_edge_id = min_edge_id;
-            previous_max_edge_id = max_edge_id;
-            previous_destinations = destinations;
-            previous_src = previous_dst;
-            previous_dst = dst;
-            previous_edge = edge;
-            *walk_buffer.get_unchecked_mut(iteration as usize) = dst;
+            } else {  // regulart local move
+                random_state = splitmix64(random_state); // TODO: for whatever reason this split is VERY important, otherwise it will always choose the first edge out of all possible after a teleport
+
+                // MS NOTE: `previous_destinations`` is needed for the n2v step,
+                // figuring out neighbors of the previous node!
+                let (dst, edge) = self.extract_edge(
+                    previous_src,
+                    previous_dst,
+                    previous_edge,
+                    random_state,
+                    &parameters.weights,
+                    min_edge_id,
+                    max_edge_id,
+                    self.get_destinations_slice(min_edge_id, max_edge_id, &destinations),
+                    self.get_destinations_slice(
+                        previous_min_edge_id,
+                        previous_max_edge_id,
+                        &previous_destinations,
+                    ),
+                    &indices,
+                    parameters.normalize_by_degree,
+                );
+
+                previous_min_edge_id = min_edge_id;
+                previous_max_edge_id = max_edge_id;
+                previous_destinations = destinations;
+                previous_src = previous_dst;
+                previous_dst = dst;
+                previous_edge = edge;
+                *walk_buffer.get_unchecked_mut(iteration as usize) = dst;
+            }
         }
     }
 

@@ -2,6 +2,14 @@ use super::*;
 use super::transition_matrix;
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct TeleportParameters {
+    // how likely that we make a teleport instead of local exploration
+    pub(crate) teleport_probability: f32, 
+    // where to teleport
+    pub(crate) teleport_matrix: teleport::TeleportMatrix,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 /// Struct to wrap walk weights.
 #[no_binding]
 pub struct WalkWeights {
@@ -9,7 +17,8 @@ pub struct WalkWeights {
     pub(crate) explore_weight: ParamsT,
     pub(crate) change_node_type_weight: ParamsT,
     pub(crate) change_edge_type_weight: ParamsT,
-    pub(crate) edgetype_transition_matrix: Option<transition_matrix::EdgetypeTransitionMatrix>
+    pub(crate) edgetype_transition_matrix: Option<transition_matrix::EdgetypeTransitionMatrix>,
+    pub(crate) teleport_params: Option<TeleportParameters>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -42,6 +51,7 @@ impl Default for WalkWeights {
             change_node_type_weight: 1.0,
             change_edge_type_weight: 1.0,
             edgetype_transition_matrix: None, // transition matrix
+            teleport_params: None,
         }
     }
 }
@@ -107,10 +117,9 @@ impl WalkWeights {
         && !self.is_dream_walk()  // check that transition matrix is uniform
     }
 
-    /// Check if an Edgetype Transition matrix is present, indicating a DreamWalk
+    /// Check if an Edgetype Transition matrix is present or teleport is enabled, indicating a DreamWalk
     pub fn is_dream_walk(&self) -> bool {
-        // TODO: better check that transition matrix is uniform
-        self.edgetype_transition_matrix.is_some()
+        self.edgetype_transition_matrix.is_some() | self.teleport_params.is_some()
     }
 }
 
@@ -467,6 +476,10 @@ impl WalksParameters {
         Ok(self)
     }
 
+    pub fn set_teleport_parameters(mut self, tele_params: TeleportParameters) -> Result<WalksParameters>{
+        self.single_walk_parameters.weights.teleport_params = Some(tele_params);
+        Ok(self)
+    }
 
     /// Validate for graph.
     ///
