@@ -42,6 +42,8 @@ mod walklets;
 mod weighted_spine;
 mod wine;
 mod graph_convolution;
+mod dreamwalk;
+pub use dreamwalk::*; // TODO remove
 
 pub use alpine::*;
 pub use basic_embedding_model::*;

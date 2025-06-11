@@ -9,6 +9,7 @@ pub enum Node2VecModels {
     CBOW,
     SkipGram,
     GloVe,
+    DreamWalk,
 }
 
 impl std::fmt::Display for Node2VecModels {
@@ -201,6 +202,7 @@ where
             Node2VecModels::CBOW => self.fit_transform_cbow(graph, embedding),
             Node2VecModels::SkipGram => self.fit_transform_skipgram(graph, embedding),
             Node2VecModels::GloVe => self.fit_transform_glove(graph, embedding),
+            Node2VecModels::DreamWalk => self.fit_transform_dreamwalk(graph, embedding),
         }
     }
 }
