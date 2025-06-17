@@ -105,16 +105,24 @@ where
             random_state = splitmix64(random_state);
             walk_parameters = walk_parameters.set_random_state(Some(random_state as usize));
 
+            // the loss across all walks for the current epoch
+            let mut loss_vector = std::iter::repeat(F::zero())
+                .take(walk_parameters.get_iterations() as usize)
+                .collect::<Vec<_>>();
             // We start to compute the new gradients.
             graph
                 // generate random walks
                 .par_iter_complete_walks(&walk_parameters)?
+                .zip(&mut loss_vector)
                 .enumerate()
-                .for_each(|(walk_number, random_walk)| {
+                .for_each(|(walk_number, (random_walk, loss_field))| {
                     // the accumulated loss for this entire random walk
                     // each central node + context node pair adds to this, as well as negative
                     // samples
-                    let mut loss_accumulator = F::zero();
+                    let mut pos_loss_accumulator = F::zero(); // for positive samples, i.e. center
+                                                              // and true context
+                    let mut neg_loss_accumulator = F::zero(); // for negative samples, i.e. center
+                                                              // and random node
                     (0..random_walk.len()) // iterate over each node in the RW
                         .filter(|&central_index| {
                             // randomly skip the node based on its degree
@@ -153,7 +161,6 @@ where
                             // We now compute the gradient relative to the positive
                             // `context` is a slice of node-ids
                             // i.e compute the grad, of each center-context pair
-
                             context
                                 .iter()
                                 .copied()
@@ -166,7 +173,7 @@ where
                                         F::one(),
                                         learning_rate,
                                     );
-                                    loss_accumulator += loss;
+                                    pos_loss_accumulator += loss;
                                 });
 
                             // We compute the gradients relative to the negative classes.
@@ -191,7 +198,7 @@ where
                                             F::zero(),
                                             learning_rate,
                                         );
-                                        loss_accumulator += loss;
+                                        neg_loss_accumulator += loss;
                                     });
                             } else {
                                 graph
@@ -214,7 +221,7 @@ where
                                             F::zero(),
                                             learning_rate,
                                         );
-                                        loss_accumulator += loss;
+                                        neg_loss_accumulator += loss;
                                     });
                             };
                             // apply the accumulated gradient to the central node
@@ -225,10 +232,23 @@ where
                                 )
                             }
                         });
-                    let ii: f32 = loss_accumulator.as_();
-                    println!("loss for RW {walk_number}: {ii}");
+
+                    // the loss for this particular random walk
+                    // actually looks like we dont AVERAGE across neg_samples (the gradients are
+                    // not avgd
+                    let rw_loss = pos_loss_accumulator + neg_loss_accumulator; //    / (self.number_of_negative_samples as f32).as_();
+                    *loss_field = rw_loss;
                 });
-            learning_rate *= self.learning_rate_decay.as_()
+            learning_rate *= self.learning_rate_decay.as_();
+
+            println!(
+                "Loss across walks: {:?}",
+                loss_vector
+                    .iter()
+                    .map(|x| x.to_f32().unwrap().clone())
+                    .collect::<Vec<f32>>()
+            );
+            println!("Learning rate: {}", learning_rate.to_f32().unwrap());
         }
         Ok(())
     }
@@ -354,13 +374,13 @@ fn test_dreamwalk() {
         .set_edgetype_transition_matrix(etm)
         .unwrap();
 
-    let embedding_size = 10;
+    let embedding_size = 256;
     let window_size = Some(5);
     let clipping_value = None;
     let number_of_negative_samples = Some(5);
-    let epochs = Some(2);
-    let learning_rate = Some(0.1);
-    let learning_rate_decay = None;
+    let epochs = Some(150);
+    let learning_rate = Some(0.01);
+    let learning_rate_decay = Some(0.9);
     let alpha = None;
     let maximum_cooccurrence_count_threshold = None;
     let stochastic_downsample_by_degree = Some(false);
