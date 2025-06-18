@@ -237,25 +237,7 @@ pub fn learn_transition_matrix_from_graph(
     res
 }
 
-fn load_big_graph() -> Graph {
-    let nodes_pq = "/home/michi/postdoc_seattle/spoke-ingestion_kedro/data/02_intermediate/graphs/spoke_graph_genegene_augmented/nodes/part-0.parquet";
-    let edges_pq = "/home/michi/postdoc_seattle/spoke-ingestion_kedro/data/02_intermediate/graphs/spoke_graph_genegene_augmented/edges/part-0.parquet";
-
-    let graph = Graph::from_parquet(
-        nodes_pq.to_string(),
-        edges_pq.to_string(),
-        "id".to_string(),
-        "subject".to_string(),
-        "object".to_string(),
-        Some("category".to_string()),
-        Some("predicate".to_string()),
-        None, // edge_weight_col,
-        Some(false),
-        Some("ggg".to_string()),
-    );
-    graph
-}
-
+use crate::ms_graphs::load_big_graph;
 #[test]
 fn test_big() {
     let graph = load_big_graph();

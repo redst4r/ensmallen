@@ -211,114 +211,16 @@ mod test_teleport {
 
 #[cfg(test)]
 mod test_teleport_walks {
+    use crate::{
+        AnnMatrix, EdgetypeTransitionMatrix, NodeT, TeleportMatrix, TeleportParameters,
+        WalksParameters,
+    };
     use itertools::Itertools;
     use ndarray::array;
     use rayon::iter::ParallelIterator;
     use vec_rand::{sample_f32, splitmix64};
-    use crate::{AnnMatrix, EdgetypeTransitionMatrix, Graph, GraphBuilder, NodeT, TeleportMatrix, TeleportParameters, WalksParameters};
     type Walk = Vec<NodeT>; // convenience: a seuqence of nodes
-
-
-    /// a graph with two connected components, to see it the walk teleports
-    fn two_component_graph() -> Graph {
-        let mut gb = GraphBuilder::new(Some("name".to_string()), Some(false));
-
-        gb.add_node("0".to_string(), Some(vec!["drug".to_string()])).unwrap();
-        gb.add_node("1".to_string(), Some(vec!["disease".to_string()])).unwrap();
-        gb.add_node("2".to_string(), Some(vec!["drug".to_string()])).unwrap();
-        gb.add_node("3".to_string(), Some(vec!["disease".to_string()])).unwrap();
-
-        gb.add_edge(
-            "0".to_string(),
-            "1".to_string(),
-            Some("A".to_string()),
-            Some(1.0),
-        )
-        .unwrap();
-        gb.add_edge(
-            "2".to_string(),
-            "3".to_string(),
-            Some("B".to_string()),
-            Some(1.0),
-        )
-        .unwrap();
-        gb.build().unwrap()
-    }
-
-    /// a graph with two connected components, to see it the walk teleports
-    /// one drug per component, rest diseases
-    ///  A -[e1] - B
-    ///  |         |
-    /// [e2]      [e2]       
-    ///  |         |
-    ///  C - [e1]- D
-    fn two_component_4nodes_each_graph() -> Graph {
-        let mut gb = GraphBuilder::new(Some("name".to_string()), Some(false));
-
-        gb.add_node("X0".to_string(), Some(vec!["drug".to_string()])).unwrap();
-        gb.add_node("X1".to_string(), Some(vec!["disease".to_string()])).unwrap();
-        gb.add_node("X2".to_string(), Some(vec!["disease".to_string()])).unwrap();
-        gb.add_node("X3".to_string(), Some(vec!["disease".to_string()])).unwrap();
-
-        gb.add_node("Y4".to_string(), Some(vec!["drug".to_string()])).unwrap();
-        gb.add_node("Y5".to_string(), Some(vec!["disease".to_string()])).unwrap();
-        gb.add_node("Y6".to_string(), Some(vec!["disease".to_string()])).unwrap();
-        gb.add_node("Y7".to_string(), Some(vec!["disease".to_string()])).unwrap();
-
-        // first component
-        gb.add_edge(
-            "X0".to_string(),
-            "X1".to_string(),
-            Some("A".to_string()),
-            Some(1.0),
-        ).unwrap();
-        gb.add_edge(
-            "X1".to_string(),
-            "X2".to_string(),
-            Some("B".to_string()),
-            Some(1.0),
-        ).unwrap();
-        gb.add_edge(
-            "X2".to_string(),
-            "X3".to_string(),
-            Some("A".to_string()),
-            Some(1.0),
-        ).unwrap();
-        gb.add_edge(
-            "X3".to_string(),
-            "X0".to_string(),
-            Some("B".to_string()),
-            Some(1.0),
-        ).unwrap();
-
-        // 2nd component
-        gb.add_edge(
-            "Y4".to_string(),
-            "Y5".to_string(),
-            Some("A".to_string()),
-            Some(1.0),
-        ).unwrap();
-        gb.add_edge(
-            "Y5".to_string(),
-            "Y6".to_string(),
-            Some("B".to_string()),
-            Some(1.0),
-        ).unwrap();
-        gb.add_edge(
-            "Y6".to_string(),
-            "Y7".to_string(),
-            Some("A".to_string()),
-            Some(1.0),
-        ).unwrap();
-        gb.add_edge(
-            "Y7".to_string(),
-            "Y4".to_string(),
-            Some("B".to_string()),
-            Some(1.0),
-        ).unwrap();
-
-        gb.build().unwrap()
-    }
+    use crate::ms_graphs::{two_component_4nodes_each_graph, two_component_graph};
 
     #[test]
     // a simple walk with teleports between disconnected components (0,1) and (2,3)
