@@ -1,3 +1,4 @@
+use crate::node_sampler::NodeSamplerWithinType;
 use crate::*;
 use express_measures::{
     dot_product_sequential_unchecked, element_wise_addition_inplace,
@@ -9,10 +10,93 @@ use num_traits::AsPrimitive;
 use rayon::prelude::*;
 use vec_rand::{sample_uniform, splitmix64};
 
+// General comment:
+// Most of the DreamWalk details are actually implemented via the `WalkParameter`
+// and how it is treated by the Graph.randomWalks functions, in particular:
+// - the edgetype-biased Random walk
+// - the teleport
+// The logic is mostly in graph.get_unchecked_single_walk_from_slice()
+//
+// What's outside of the random walk framework is the nodetype-biased SkipGram.
+// That's what we handle here!
+
 impl<W> Node2Vec<W>
 where
     W: WalkTransformer,
 {
+    fn sample_negative_nodes(
+        &self,
+        central_index: usize,
+        central_node_id: NodeT,
+        walk_number: usize,
+        random_state: u64,
+        graph: &Graph,
+        node_sampler: &NodeSamplerWithinType,
+        use_nodetype_aware_skipgram: bool,
+    ) -> Vec<NodeT> {
+        // previously, there were two huge if/else statements doing essentially
+        // the same, except sampling the nodes differently, each arm returning
+        // an iterator (then some idnetical filtering)
+        // to remove the redundancy, I factored out the sampling, but you cant
+        // return iterators from both arms (opaque type), so instead the
+        // samples get instaniated to a Vec<NodeT>.
+        // Should be fine, these vectors are at best a few hundred nodes...s
+        //
+        // the logic with scale free and node-aware
+        // (scale=False, nodeaware=False) => simple, alrdy impl
+        // (scale=True, nodeaware=False)  => simple, alrdy impl
+        // (scale=False, nodeaware=True) =>  just use the nodeSampler
+        // (scale=True, nodeaware=True)  => err, not suppoerted (would need to
+        // smaple nodetype and degree)
+        //
+        //
+        let sampled_nodes: Vec<NodeT> = match (
+            self.use_scale_free_distribution,
+            use_nodetype_aware_skipgram,
+        ) {
+            // scale by degree, dont do node-aware
+            (true, false) => {
+                // PS: this samples negatives according to their degree
+                // smart: internally, just picks a random edge and return its src
+                graph
+                    .iter_random_outbounds_scale_free_node_ids(
+                        self.number_of_negative_samples,
+                        splitmix64(random_state + central_index as u64 + walk_number as u64),
+                    )
+                    .collect()
+            }
+            // dont scale, no node-aware
+            (false, false) => graph
+                .iter_random_node_ids(
+                    self.number_of_negative_samples,
+                    splitmix64(random_state + central_index as u64 + walk_number as u64),
+                )
+                .collect(),
+            (true, true) => {
+                panic!("not implemented")
+            }
+            // no scaling, but node-aware skipgram
+            (false, true) => {
+                // get the nodes type
+                let center_type = graph
+                    .get_node_type_ids_from_node_id(central_node_id)
+                    .unwrap()
+                    .unwrap()[0];
+
+                node_sampler
+                    .sample(
+                        center_type,
+                        self.number_of_negative_samples,
+                        splitmix64(random_state + central_index as u64 + walk_number as u64),
+                    )
+                    .expect("nodetype must exist!")
+                    .collect()
+            }
+        };
+
+        sampled_nodes
+    }
+
     /// Computes in the provided slice of embedding the DreamWalk node embedding.
     ///
     /// # Implementative details
@@ -26,6 +110,7 @@ where
         &self,
         graph: &Graph,
         embedding: &mut [&mut [F]],
+        use_nodetype_aware_skipgram: bool,
     ) -> Result<(), String>
     where
         f32: AsPrimitive<F>,
@@ -43,6 +128,9 @@ where
         // we create or not a visible progress bar to show the progress
         // in the training epochs.
         let pb = self.get_progress_bar();
+
+        println!("creating NodeSampler");
+        let node_sampler = NodeSamplerWithinType::new(graph);
 
         // this computes the update given a single central node and a single context node
         let compute_mini_batch_step = |central_node_embedding: &[F],
@@ -99,7 +187,9 @@ where
         };
 
         // We start to loop over the required amount of epochs.
-        for _ in (0..self.epochs).progress_with(pb) {
+        for epoch in (0..self.epochs).progress_with(pb) {
+            // println!("Starting epoch {epoch}");
+
             // We update the random state used to generate the random walks
             // and the negative samples.
             random_state = splitmix64(random_state);
@@ -177,53 +267,32 @@ where
                                 });
 
                             // We compute the gradients relative to the negative classes.
-                            if self.use_scale_free_distribution {
-                                graph
-                                    .iter_random_outbounds_scale_free_node_ids(
-                                        self.number_of_negative_samples,
-                                        splitmix64(
-                                            random_state
-                                                + central_index as u64
-                                                + walk_number as u64,
-                                        ),
-                                    )
-                                    .filter(|&non_central_node_id| {
-                                        non_central_node_id != central_node_id
-                                    })
-                                    .for_each(|non_central_node_id| {
-                                        let loss = compute_mini_batch_step(
-                                            &central_node_embedding,
-                                            cumulative_central_node_gradient.as_mut_slice(),
-                                            non_central_node_id,
-                                            F::zero(),
-                                            learning_rate,
-                                        );
-                                        neg_loss_accumulator += loss;
-                                    });
-                            } else {
-                                graph
-                                    .iter_random_node_ids(
-                                        self.number_of_negative_samples,
-                                        splitmix64(
-                                            random_state
-                                                + central_index as u64
-                                                + walk_number as u64,
-                                        ),
-                                    )
-                                    .filter(|&non_central_node_id| {
-                                        non_central_node_id != central_node_id
-                                    })
-                                    .for_each(|non_central_node_id| {
-                                        let loss = compute_mini_batch_step(
-                                            &central_node_embedding,
-                                            cumulative_central_node_gradient.as_mut_slice(),
-                                            non_central_node_id,
-                                            F::zero(),
-                                            learning_rate,
-                                        );
-                                        neg_loss_accumulator += loss;
-                                    });
-                            };
+                            let sampled_nodes = self.sample_negative_nodes(
+                                central_index,
+                                central_node_id,
+                                walk_number,
+                                random_state,
+                                graph,
+                                &node_sampler,
+                                use_nodetype_aware_skipgram,
+                            );
+                            // Proceed with filtering and gradients on the sampled nodes
+                            sampled_nodes
+                                .into_iter()
+                                .filter(|&non_central_node_id| {
+                                    non_central_node_id != central_node_id
+                                })
+                                .for_each(|non_central_node_id| {
+                                    let loss = compute_mini_batch_step(
+                                        &central_node_embedding,
+                                        cumulative_central_node_gradient.as_mut_slice(),
+                                        non_central_node_id,
+                                        F::zero(),
+                                        learning_rate,
+                                    );
+                                    neg_loss_accumulator += loss;
+                                });
+
                             // apply the accumulated gradient to the central node
                             unsafe {
                                 element_wise_addition_inplace(
@@ -241,50 +310,58 @@ where
                 });
             learning_rate *= self.learning_rate_decay.as_();
 
-            println!(
-                "Loss across walks: {:?}",
-                loss_vector
-                    .iter()
-                    .map(|x| x.to_f32().unwrap().clone())
-                    .collect::<Vec<f32>>()
-            );
-            println!("Learning rate: {}", learning_rate.to_f32().unwrap());
+            // just some logging
+            if false {
+                println!("Epoch {epoch}");
+                println!(
+                    "Loss across walks: {:?}",
+                    loss_vector
+                        .iter()
+                        .map(|x| x.to_f32().unwrap().clone())
+                        .collect::<Vec<f32>>()
+                );
+                println!("Learning rate: {}", learning_rate.to_f32().unwrap());
+            }
         }
         Ok(())
     }
 }
 
-use graph::ms_graphs::{load_big_graph, two_component_4nodes_each_graph};
-use graph::EdgetypeTransitionMatrix;
-use graph::{EdgeTypeT, WalksParameters};
 #[test]
 fn test_dreamwalk() {
-    let graph = load_big_graph();
+    use graph::ms_graphs::load_big_graph;
+    use graph::ms_graphs::load_ppi_graph;
+    // use graph::ms_graphs::two_component_4nodes_each_graph;
+    use graph::EdgetypeTransitionMatrix;
+    use graph::{EdgeTypeT, WalksParameters};
+    // let graph = load_big_graph();
+    let graph = load_ppi_graph();
     // let graph = two_component_4nodes_each_graph();
 
     let edgetypes: Vec<EdgeTypeT> = graph.get_unique_edge_type_ids().unwrap();
     let etm = EdgetypeTransitionMatrix::new(edgetypes);
-    let parameters = WalksParameters::new(10)
-        .unwrap()
-        .set_edgetype_transition_matrix(etm)
-        .unwrap();
+    let parameters = WalksParameters::new(30).unwrap();
+    // .set_edgetype_transition_matrix(etm)
+    // .unwrap();
 
     let embedding_size = 256;
     let window_size = Some(5);
-    let clipping_value = None;
+    let clipping_value = Some(6.0);
     let number_of_negative_samples = Some(5);
-    let epochs = Some(150);
-    let learning_rate = Some(0.01);
+    let epochs = Some(10);
+    let learning_rate = Some(0.1);
     let learning_rate_decay = Some(0.9);
+    // let learning_rate_decay = None;
     let alpha = None;
     let maximum_cooccurrence_count_threshold = None;
-    let stochastic_downsample_by_degree = Some(false);
+    let stochastic_downsample_by_degree = Some(true);
     let normalize_learning_rate_by_degree = None;
     let use_scale_free_distribution = None;
     let dtype = None;
     let verbose = Some(true);
     let transformer = IdentifyWalkTransformer {};
 
+    println!("instantiating N2V model");
     let n2v = Node2Vec::new(
         Node2VecModels::DreamWalk,
         transformer,
@@ -308,11 +385,16 @@ fn test_dreamwalk() {
 
     // this is actually just a 2-element vector (the in/out embeddings)
     // but each vector is a flattened version of the nsample x dim
+    println!("instantiating embeddings randomly");
     let mut v = Vec::new();
     let mut seed = 42;
     for _i in 0..2 {
         let size = (embedding_size) * graph.get_number_of_nodes() as usize;
-        let x = vec_rand::gen_random_vec_f32(size, seed);
+        let mut x = vec_rand::gen_random_vec_f32(size, seed);
+        x = x
+            .into_iter()
+            .map(|v| (2_f32 * v - 1_f32) * 2.45 / (embedding_size as f32).sqrt())
+            .collect();
         seed = splitmix64(seed);
         v.push(x);
     }
@@ -320,8 +402,31 @@ fn test_dreamwalk() {
 
     println!("{:?}", &slice2d[0][..10]);
     println!("{:?}", &slice2d[1][..10]);
-    let _r = n2v.fit_transform_dreamwalk(&graph, &mut slice2d).unwrap();
+    n2v.fit_transform_dreamwalk(&graph, &mut slice2d, false)
+        .unwrap();
 
     println!("{:?}", &slice2d[0][..10]);
     println!("{:?}", &slice2d[1][..10]);
+
+    let shape = (graph.get_number_of_nodes() as usize, embedding_size);
+    println!("writing embeeding 1");
+    write_embedding("/tmp/embedding.csv", &slice2d[0], shape);
+    println!("writing embeeding 2");
+    write_embedding("/tmp/embedding2.csv", &slice2d[1], shape);
+}
+
+use csv::WriterBuilder;
+use ndarray;
+use ndarray_csv;
+use ndarray_csv::Array2Writer;
+use std::fs::File;
+fn write_embedding(fname: &str, embedding: &[f32], shape: (usize, usize)) {
+    // turn flat emberdding vector into matrix
+    let arr2 = ndarray::Array1::from_vec(embedding.into())
+        .into_shape_with_order(shape)
+        .expect("wrong size provided");
+
+    let file = File::create(fname).unwrap();
+    let mut writer = WriterBuilder::new().has_headers(false).from_writer(file);
+    writer.serialize_array2(&arr2).unwrap();
 }

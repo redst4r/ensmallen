@@ -96,11 +96,12 @@ where
 
             // We start to compute the new gradients.
             graph
+                // generate random walks
                 .par_iter_complete_walks(&walk_parameters)?
                 .enumerate()
                 .for_each(|(walk_number, random_walk)| {
-                    (0..random_walk.len())
-                        .filter(|&central_index| {
+                    (0..random_walk.len())  // iterate over each node in the RW
+                        .filter(|&central_index| {   // randomly skip the node based on its degree
                             if !self.stochastic_downsample_by_degree {
                                 true
                             } else {
@@ -115,6 +116,7 @@ where
                                 degree < sample_uniform(number_of_nodes as _, seed) as _
                             }
                         })
+                        // get the context/surrounding tokens
                         .map(|central_index| {
                             (
                                 &random_walk[central_index.saturating_sub(self.window_size)
@@ -123,6 +125,7 @@ where
                                 central_index,
                             )
                         })
+                        // for each node+context pair, get the gradient
                         .for_each(|(context, central_node_id, central_index)| {
                             let mut cumulative_central_node_gradient =
                                 vec![F::zero(); self.get_embedding_size()];

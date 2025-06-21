@@ -4,9 +4,18 @@ use crate::GraphBuilder;
 
 #[allow(dead_code)]
 pub fn load_big_graph() -> Graph {
-    let nodes_pq = "/home/michi/postdoc_seattle/spoke-ingestion_kedro/data/02_intermediate/graphs/spoke_graph_genegene_augmented/nodes/part-0.parquet";
-    let edges_pq = "/home/michi/postdoc_seattle/spoke-ingestion_kedro/data/02_intermediate/graphs/spoke_graph_genegene_augmented/edges/part-0.parquet";
+    let nodes_pq = "/home/michi/postdoc_seattle/spoke-ingestion_kedro/data/03_slicing/spoke_graph_genegene_augmented/nodes/part-0.parquet";
+    let edges_pq = "/home/michi/postdoc_seattle/spoke-ingestion_kedro/data/03_slicing/spoke_graph_genegene_augmented/edges/part-0.parquet";
+    load_graph(nodes_pq, edges_pq)
+}
 
+pub fn load_ppi_graph() -> Graph {
+    let nodes_pq = "/home/michi/postdoc_seattle/spoke-ingestion_kedro/data/03_slicing/spoke_graph_ppigenereg_augmented/nodes/part-0.parquet";
+    let edges_pq = "/home/michi/postdoc_seattle/spoke-ingestion_kedro/data/03_slicing/spoke_graph_ppigenereg_augmented/edges/part-0.parquet";
+    load_graph(nodes_pq, edges_pq)
+}
+
+pub fn load_graph(nodes_pq: &str, edges_pq: &str) -> Graph {
     let graph = Graph::from_parquet(
         nodes_pq.to_string(),
         edges_pq.to_string(),
