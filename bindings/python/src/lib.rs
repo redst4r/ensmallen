@@ -81,6 +81,7 @@ pub fn register_models(_py: Python, _m: &PyModule) -> PyResult<()> {
     _m.add_class::<CBOW>()?;
     _m.add_class::<GloVe>()?;
     _m.add_class::<SkipGram>()?;
+    _m.add_class::<DreamWalk>()?;
     _m.add_class::<WalkletsCBOW>()?;
     _m.add_class::<WalkletsGloVe>()?;
     _m.add_class::<WalkletsSkipGram>()?;

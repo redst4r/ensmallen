@@ -122,17 +122,24 @@ where
         let number_of_nodes = graph.get_number_of_nodes();
 
         let shared_embedding = ThreadDataRaceAware::new(embedding);
-
+        println!("Hello from fit_transform_dreamwalk");
+        println!("Pa: {:?}", walk_parameters);
+        println!("LR: {:?}", self.learning_rate);
+        println!("LR decay: {:?}", self.learning_rate_decay);
+        println!("Node aware skipgram {use_node_aware_skipgram}");
         // Depending whether verbosity was requested by the user
         // we create or not a visible progress bar to show the progress
         // in the training epochs.
         let pb = self.get_progress_bar();
+
+        let mut loss_over_epochs = Vec::new();
 
         let compute_mini_batch_step = |central_node_embedding: &[F],
                                        cumulative_central_node_gradient: &mut [F],
                                        contextual_node_id: NodeT,
                                        label: F,
                                        learning_rate: F| {
+            // get the contexts output embedding; TODO: why is this mutatably, shouldnt change
             let node_hidden = unsafe {
                 &mut (*shared_embedding.get())[1][(contextual_node_id as usize
                     * self.embedding_size)
@@ -144,7 +151,7 @@ where
                     / scale_factor;
 
             if dot > cv || dot < -cv {
-                return;
+                return F::zero();
             }
 
             let mut variation = (label - sigmoid(dot)) * learning_rate;
@@ -168,26 +175,48 @@ where
                     variation,
                 )
             };
+
+            // Sigmoid loss:  ylog(p) + (1-y)log(1-p) and p=sigmoid(dot)
+            // due to symmetry: log(1-sigmoid(dot)) = log(1- [1-sigmoid(-dot)]) = log(sigmoid(-dot)
+            let loss = if label == F::one() {
+                sigmoid(dot).log(F::from(10.0).unwrap())
+            } else {
+                sigmoid(-dot).log(F::from(10.0).unwrap())
+            };
+            loss
         };
 
         // We start to loop over the required amount of epochs.
-        for _ in (0..self.epochs).progress_with(pb) {
+        for epoch in (0..self.epochs).progress_with(pb) {
             // We update the random state used to generate the random walks
             // and the negative samples.
             random_state = splitmix64(random_state);
             walk_parameters = walk_parameters.set_random_state(Some(random_state as usize));
 
             // the loss across all walks for the current epoch
-            let mut loss_vector = std::iter::repeat(F::zero())
-                .take(walk_parameters.get_iterations() as usize)
-                .collect::<Vec<_>>();
+            // Note: `par_iter_complete_walks()` runs a RW for each node in the graph
+            // and repeats the entire thing `n_iterations` times!
+            let mut loss_vector = vec![
+                F::zero();
+                graph.get_number_of_nodes() as usize
+                    * walk_parameters.get_iterations() as usize
+            ];
 
             // We start to compute the new gradients.
             graph
                 // generate random walks
                 .par_iter_complete_walks(&walk_parameters)?
+                .zip(&mut loss_vector)
                 .enumerate()
-                .for_each(|(walk_number, random_walk)| {
+                .for_each(|(walk_number, (random_walk, loss_field))| {
+                    // the accumulated loss for this entire random walk
+                    // each central node + context node pair adds to this, as well as negative
+                    // samples
+                    let mut pos_loss_accumulator = F::zero(); // for positive samples, i.e. center
+                                                              // and true context
+                    let mut neg_loss_accumulator = F::zero(); // for negative samples, i.e. center
+                                                              // and random node
+
                     (0..random_walk.len()) // iterate over each node in the RW
                         .filter(|&central_index| {
                             // randomly skip the node based on its degree
@@ -230,13 +259,14 @@ where
                                 .copied()
                                 .filter(|&context_node_id| context_node_id != central_node_id)
                                 .for_each(|context_node_id| {
-                                    compute_mini_batch_step(
+                                    let loss = compute_mini_batch_step(
                                         &central_node_embedding,
                                         cumulative_central_node_gradient.as_mut_slice(),
                                         context_node_id,
                                         F::one(),
                                         learning_rate,
                                     );
+                                    pos_loss_accumulator += loss;
                                 });
 
                             // We compute the gradients relative to the negative classes.
@@ -254,13 +284,14 @@ where
                                     non_central_node_id != central_node_id
                                 })
                                 .for_each(|non_central_node_id| {
-                                    compute_mini_batch_step(
+                                    let loss = compute_mini_batch_step(
                                         &central_node_embedding,
                                         cumulative_central_node_gradient.as_mut_slice(),
                                         non_central_node_id,
                                         F::zero(),
                                         learning_rate,
-                                    )
+                                    );
+                                    neg_loss_accumulator += loss;
                                 });
                             // apply the accumulated gradient to the central node
                             unsafe {
@@ -269,10 +300,31 @@ where
                                     cumulative_central_node_gradient.as_slice(),
                                 )
                             }
-                        });
-                });
-            learning_rate *= self.learning_rate_decay.as_()
-        }
+                        }); // done iterating the contexts
+
+                    // the loss for this particular random walk
+                    // actually looks like we dont AVERAGE across neg_samples (the gradients are
+                    // not avgd
+                    let rw_loss = pos_loss_accumulator + neg_loss_accumulator; //    / (self.number_of_negative_samples as f32).as_();
+                    *loss_field = rw_loss;
+                }); // done iterating over walks
+            learning_rate *= self.learning_rate_decay.as_();
+
+            // just some logging
+            let total_loss: f32 = loss_vector
+                .iter()
+                .map(|x| x.to_f32().unwrap().clone())
+                .sum();
+            let avg_loss = total_loss / loss_vector.len() as f32;
+
+            loss_over_epochs.push(avg_loss);
+            if true {
+                println!("Epoch {epoch}");
+                println!("Loss across walks: {avg_loss:?}",);
+                println!("Learning rate: {}", learning_rate.to_f32().unwrap());
+            };
+        } // end of epoch
+        println!("Loss over epochs {loss_over_epochs:?}");
         Ok(())
     }
 }
@@ -281,7 +333,7 @@ where
 fn test_dreamwalk() {
     use graph::ms_graphs::load_big_graph;
     // use graph::ms_graphs::load_ppi_graph;
-    use graph::EdgetypeTransitionMatrix;
+    // use graph::EdgetypeTransitionMatrix;
     use graph::{EdgeTypeT, WalksParameters};
     let graph = load_big_graph();
     // let graph = load_ppi_graph();
@@ -293,6 +345,13 @@ fn test_dreamwalk() {
         .set_explore_weight(Some(1.0))
         .unwrap()
         .set_return_weight(Some(1.0))
+        .unwrap()
+        .set_iterations(Some(10_u32))
+        .unwrap()
+        .set_normalize_by_degree(Some(true))
+        .set_change_node_type_weight(Some(1.0)) // these are multiplicative! i.e. neutral is ==1
+        .unwrap()
+        .set_change_edge_type_weight(Some(1.0))
         .unwrap();
     // .set_edgetype_transition_matrix(etm)
     // .unwrap();
@@ -301,8 +360,8 @@ fn test_dreamwalk() {
     let window_size = Some(5);
     let clipping_value = Some(6.0);
     let number_of_negative_samples = Some(10);
-    let epochs = Some(50);
-    let learning_rate = Some(0.1);
+    let epochs = Some(10);
+    let learning_rate = Some(0.01);
     let learning_rate_decay = Some(0.9);
     let alpha = None;
     let maximum_cooccurrence_count_threshold = None;
@@ -343,8 +402,7 @@ fn test_dreamwalk() {
     println!("instantiating embeddings randomly");
     println!("{:?}", &slice2d[0][..10]);
     println!("{:?}", &slice2d[1][..10]);
-    n2v.fit_transform_dreamwalk(&graph, &mut slice2d, false)
-        .unwrap();
+    n2v.fit_transform(&graph, &mut slice2d).unwrap();
 
     println!("{:?}", &slice2d[0][..10]);
     println!("{:?}", &slice2d[1][..10]);

@@ -138,8 +138,6 @@ where
                                        contextual_node_id: NodeT,
                                        label: F,
                                        learning_rate: F| {
-            // println!("{}", central_node_embedding.len());
-
             // get the contexts output embedding; TODO: why is this mutatably, shouldnt change
             let node_hidden = unsafe {
                 &mut (*shared_embedding.get())[1][(contextual_node_id as usize

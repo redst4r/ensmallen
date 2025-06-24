@@ -3,6 +3,7 @@ use graph::{Graph, NodeT, NodeTypeT};
 use std::collections::HashMap;
 use vec_rand::sample_uniform_unbiased_simple;
 use vec_rand::splitmix64;
+
 // get a mapping of nodetype -> list of node_ids
 // to do the nodetype aware skipgram (negative sampling from within the nodetype) efficiently
 fn nodetype_to_node_ids(graph: &Graph) -> HashMap<NodeTypeT, Vec<NodeT>> {
@@ -21,6 +22,7 @@ fn nodetype_to_node_ids(graph: &Graph) -> HashMap<NodeTypeT, Vec<NodeT>> {
     hmap
 }
 
+/// Samples random nodes from the graph, but constraind to a particular node-type
 pub(crate) struct NodeSamplerWithinType {
     hmap: HashMap<NodeTypeT, Vec<NodeT>>,
 }

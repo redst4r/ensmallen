@@ -53,8 +53,8 @@ mod type_file_writer;
 pub use self::type_file_writer::TypeFileWriter;
 mod from_csv;
 
-mod parameters_validators;
 mod getters_boolean;
+mod parameters_validators;
 
 mod dijkstra;
 pub use self::dijkstra::*;
@@ -176,10 +176,10 @@ pub use from_pq::*;
 mod pagerank;
 pub use pagerank::*;
 
-mod transition_matrix;
+pub mod transition_matrix;
 pub use transition_matrix::*;
 
 mod teleport;
 pub use teleport::*;
 pub mod ms_graphs;
-
+pub use ms_graphs::*;

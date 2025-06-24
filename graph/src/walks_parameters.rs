@@ -1,10 +1,11 @@
-use super::*;
 use super::transition_matrix;
+use super::*;
 
 #[derive(Clone, Debug, PartialEq)]
+#[no_binding]
 pub struct TeleportParameters {
     // how likely that we make a teleport instead of local exploration
-    pub(crate) teleport_probability: f32, 
+    pub(crate) teleport_probability: f32,
     // where to teleport
     pub(crate) teleport_matrix: teleport::TeleportMatrix,
 }
