@@ -1,3 +1,4 @@
+use crate::node_sampler::{NodeSamplerNew, NodeSamplerWithinType};
 use crate::*;
 use express_measures::{
     dot_product_sequential_unchecked, element_wise_addition_inplace,
@@ -28,8 +29,8 @@ where
         walk_number: usize,
         random_state: u64,
         graph: &Graph,
-        // node_sampler: &NodeSamplerWithinType,
-        // use_nodetype_aware_skipgram: bool,
+        node_sampler: &NodeSamplerNew,
+        use_nodetype_aware_skipgram: bool,
     ) -> Vec<NodeT> {
         // previously, there were two huge if/else statements doing essentially
         // the same, except sampling the nodes differently, each arm returning
@@ -43,11 +44,9 @@ where
         // (scale=False, nodeaware=False) => simple, alrdy impl
         // (scale=True, nodeaware=False)  => simple, alrdy impl
         // (scale=False, nodeaware=True) =>  just use the nodeSampler
-        // (scale=True, nodeaware=True)  => err, not suppoerted (would need to
-        // smaple nodetype and degree)
+        // (scale=True, nodeaware=True)  =>just use the nodeSampler
         //
         //
-        let use_nodetype_aware_skipgram = false;
         let sampled_nodes: Vec<NodeT> = match (
             self.use_scale_free_distribution,
             use_nodetype_aware_skipgram,
@@ -71,25 +70,37 @@ where
                 )
                 .collect(),
             (true, true) => {
-                panic!("not implemented")
+                // get the nodes type
+                let center_type = graph
+                    .get_node_type_ids_from_node_id(central_node_id)
+                    .unwrap()
+                    .unwrap()[0]; // TODO: assuming only a single tpye per node
+
+                node_sampler
+                    .sample_degree_biased(
+                        center_type,
+                        self.number_of_negative_samples,
+                        splitmix64(random_state + central_index as u64 + walk_number as u64),
+                    )
+                    .expect("nodetype must exist!")
+                    .collect()
             }
             // no scaling, but node-aware skipgram
             (false, true) => {
-                todo!("not implemented yet")
-                // // get the nodes type
-                // let center_type = graph
-                //     .get_node_type_ids_from_node_id(central_node_id)
-                //     .unwrap()
-                //     .unwrap()[0];
-                //
-                // node_sampler
-                //     .sample(
-                //         center_type,
-                //         self.number_of_negative_samples,
-                //         splitmix64(random_state + central_index as u64 + walk_number as u64),
-                //     )
-                //     .expect("nodetype must exist!")
-                //     .collect()
+                // get the nodes type
+                let center_type = graph
+                    .get_node_type_ids_from_node_id(central_node_id)
+                    .unwrap()
+                    .unwrap()[0]; // TODO: assuming only a single tpye per node
+
+                node_sampler
+                    .sample_uniform(
+                        center_type,
+                        self.number_of_negative_samples,
+                        splitmix64(random_state + central_index as u64 + walk_number as u64),
+                    )
+                    .expect("nodetype must exist!")
+                    .collect()
             }
         };
 
@@ -132,6 +143,11 @@ where
         // in the training epochs.
         let pb = self.get_progress_bar();
 
+        println!("creating NodeSampler");
+        // let node_sampler = NodeSamplerWithinType::new(graph);
+        let node_sampler = NodeSamplerNew::new(graph);
+
+        // recording the loss across epochs
         let mut loss_over_epochs = Vec::new();
 
         let compute_mini_batch_step = |central_node_embedding: &[F],
@@ -276,6 +292,8 @@ where
                                 walk_number,
                                 random_state,
                                 &graph,
+                                &node_sampler,
+                                use_node_aware_skipgram,
                             );
 
                             sampled_nodes
@@ -402,7 +420,10 @@ fn test_dreamwalk() {
     println!("instantiating embeddings randomly");
     println!("{:?}", &slice2d[0][..10]);
     println!("{:?}", &slice2d[1][..10]);
-    n2v.fit_transform(&graph, &mut slice2d).unwrap();
+
+    let use_nodetype_aware = false;
+    n2v.fit_transform_dreamwalk(&graph, &mut slice2d, use_nodetype_aware)
+        .unwrap();
 
     println!("{:?}", &slice2d[0][..10]);
     println!("{:?}", &slice2d[1][..10]);
