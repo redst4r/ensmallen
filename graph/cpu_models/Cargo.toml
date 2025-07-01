@@ -22,3 +22,6 @@ heterogeneous_graphlets = {git = "https://github.com/LucaCappelletti94/heterogen
 num-traits = {git="https://github.com/zommiommy/num-traits.git", features=["atomic_from_mut"]}
 parallel_frontier = {git="https://github.com/zommiommy/parallel_frontier"}
 half = {version = "2.4", features = ["use-intrinsics", "num-traits"]}
+ndarray-csv = "0.5"
+csv = "1.3"
+ndarray = "0.16"
