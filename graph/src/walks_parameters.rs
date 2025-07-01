@@ -472,12 +472,20 @@ impl WalksParameters {
         Ok(self)
     }
 
-    pub fn set_edgetype_transition_matrix(mut self, etm: EdgetypeTransitionMatrix) -> Result<WalksParameters>{
-        self.single_walk_parameters.weights.edgetype_transition_matrix = Some(etm);
+    pub fn set_edgetype_transition_matrix(
+        mut self,
+        etm: EdgetypeTransitionMatrix,
+    ) -> Result<WalksParameters> {
+        self.single_walk_parameters
+            .weights
+            .edgetype_transition_matrix = Some(etm);
         Ok(self)
     }
 
-    pub fn set_teleport_parameters(mut self, tele_params: TeleportParameters) -> Result<WalksParameters>{
+    pub fn set_teleport_parameters(
+        mut self,
+        tele_params: TeleportParameters,
+    ) -> Result<WalksParameters> {
         self.single_walk_parameters.weights.teleport_params = Some(tele_params);
         Ok(self)
     }
