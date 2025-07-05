@@ -352,7 +352,7 @@ fn test_dreamwalk() {
     use graph::ms_graphs::load_big_graph;
     // use graph::ms_graphs::load_ppi_graph;
     // use graph::EdgetypeTransitionMatrix;
-    use graph::{EdgeTypeT, WalksParameters};
+    use graph::WalksParameters;
     let graph = load_big_graph();
     // let graph = load_ppi_graph();
 

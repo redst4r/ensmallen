@@ -53,13 +53,17 @@ where
                 "normalize_learning_rate_by_degree",
                 "use_scale_free_distribution",
                 "dtype",
-                "verbose"
+                "verbose",
+                "edgetype_transition_file",
+                "teleport_matrices",
             ])
             .as_slice()
         ))?;
 
         let parameters = pe!(build_walk_parameters(kwargs))?;
-
+        println!("Node2VecBinding::new  --  {parameters:?}");
+        // TODO: set the edgteype_transition matrix here if supplied
+        //
         Ok(Self {
             central_nodes_embedding_path: extract_value_rust_result!(
                 kwargs,

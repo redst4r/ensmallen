@@ -11,7 +11,7 @@ pub enum Node2VecModels {
     GloVe,
     // DreamWalk, but without the nodetype aware skipgram
     // TODO: this is really equivalent to ::Skipgram (which would also handle the teleport etc)
-    DreamWalk,
+    // DreamWalk,
     // DreamWalk with nodetype aware skipgram; TODO: should better be called NodeAwareSkipgram
     // (Dreamwalk is just a collection of tweaks)
     DreamWalkNodeAware,
@@ -207,7 +207,7 @@ where
             Node2VecModels::CBOW => self.fit_transform_cbow(graph, embedding),
             Node2VecModels::SkipGram => self.fit_transform_skipgram(graph, embedding),
             Node2VecModels::GloVe => self.fit_transform_glove(graph, embedding),
-            Node2VecModels::DreamWalk => self.fit_transform_dreamwalk(graph, embedding, false),
+            // Node2VecModels::DreamWalk => self.fit_transform_dreamwalk(graph, embedding, false), // TODO: remove this
             Node2VecModels::DreamWalkNodeAware => {
                 self.fit_transform_dreamwalk(graph, embedding, true)
             }

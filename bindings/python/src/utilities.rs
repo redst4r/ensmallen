@@ -1,48 +1,52 @@
 use super::*;
 use cpu_models::FeatureSlice;
-use graph::{NodeT, WalksParameters, WeightT};
+use graph::{EdgetypeTransitionMatrix, NodeT, WalksParameters, WeightT};
 use numpy::PyArray2;
 
 /// Return new walk parameters object from provided kwargs.
 pub(crate) fn build_walk_parameters(kwargs: &PyDict) -> PyResult<WalksParameters> {
     let walk_length = extract_value_rust_result!(kwargs, "walk_length", u64);
-    Ok(pe!(pe!(pe!(pe!(pe!(pe!(pe!(walk_length
-        .map_or_else(
-            || Ok(WalksParameters::default()),
-            |walk_length| WalksParameters::new(walk_length),
-        ))?
-    .set_change_edge_type_weight(
-        extract_value_rust_result!(kwargs, "change_edge_type_weight", WeightT)
+
+    let mut params = pe!(pe!(pe!(pe!(pe!(pe!(pe!(walk_length.map_or_else(
+        || Ok(WalksParameters::default()),
+        |walk_length| WalksParameters::new(walk_length),
     ))?
-    .set_change_node_type_weight(
-        extract_value_rust_result!(kwargs, "change_node_type_weight", WeightT)
-    ))?
+    .set_change_edge_type_weight(extract_value_rust_result!(
+        kwargs,
+        "change_edge_type_weight",
+        WeightT
+    )))?
+    .set_change_node_type_weight(extract_value_rust_result!(
+        kwargs,
+        "change_node_type_weight",
+        WeightT
+    )))?
     .set_explore_weight(extract_value_rust_result!(
         kwargs,
         "explore_weight",
         WeightT
     )))?
-    .set_return_weight(extract_value_rust_result!(
-        kwargs,
-        "return_weight",
-        WeightT
-    )))?
+    .set_return_weight(extract_value_rust_result!(kwargs, "return_weight", WeightT)))?
     .set_random_state(extract_value_rust_result!(kwargs, "random_state", usize))
-    .set_max_neighbours(extract_value_rust_result!(
-        kwargs,
-        "max_neighbours",
-        NodeT
-    )))?
+    .set_max_neighbours(extract_value_rust_result!(kwargs, "max_neighbours", NodeT)))?
     .set_normalize_by_degree(extract_value_rust_result!(
         kwargs,
         "normalize_by_degree",
         bool
     ))
-    .set_iterations(extract_value_rust_result!(
-        kwargs,
-        "iterations",
-        NodeT
-    )))?)
+    .set_iterations(extract_value_rust_result!(kwargs, "iterations", NodeT)))?;
+
+    //add the edgetype_matrix here if given
+    // NOTE: bit hacky, we use "empty" as the placeholder
+    let etmatrix_file = extract_value_rust_result!(kwargs, "edgetype_transition_file", &str)
+        .expect("build_walk_params: error extracting edgetype-file");
+    if etmatrix_file != "empty" {
+        params = pe!(params
+            .set_edgetype_transition_matrix(EdgetypeTransitionMatrix::from_file(etmatrix_file)))?;
+    }
+
+    // TODO: add the teleport matrix and edgetype_matrix here
+    Ok(params)
 }
 
 macro_rules! impl_normalize_features {

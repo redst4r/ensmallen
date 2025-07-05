@@ -94,13 +94,14 @@ impl EdgetypeTransitionMatrix {
     }
 
     // estimate this edge transition maitrx from a set of random walks
-    pub fn from_walks(walks: Vec<Vec<NodeT>>, graph: &Graph) -> Self {
+    pub(crate) fn from_walks(walks: Vec<Vec<NodeT>>, graph: &Graph) -> Self {
         // count edgetypes per walk
         let (ets, freqs) = walks_to_edgetype_frequencies(walks, graph);
-
-        // somehow pearson_corr wants floats instead of usize
+        // println!("Freq matrix: {freqs:?}");
         let corr = freqs_to_correlation(freqs.mapv(|val| val as f32));
-
+        // Nan come from columns with no variation, ndarry.corr puts Nan there instead of 0
+        let corr = corr.mapv(|val| if val.is_nan() { 0.0 } else { val });
+        // println!("Corr matrix: {corr:?}");
         // values range from [-1, 1], but we want proabilities
         // thats why the authors shove the whole matrix trough a sigmoid, converting everything to [0,1]
         let transition = corr.mapv(sigmoid);
@@ -227,7 +228,13 @@ fn vec_of_vec_to_ndarray<T>(v: Vec<Vec<T>>) -> ndarray::Array2<T> {
 
 /// Pearson correlation of the columns of a 2D array, (m,n) -> (n,n)
 fn freqs_to_correlation(v: Array2<f32>) -> Array2<f32> {
-    v.t().pearson_correlation().unwrap()
+    // edge-case: if there's only one edgetype, pearson_correlation will be [[NaN]]
+    // but should really be [[1]]
+    if v.shape() == &[1, 1] {
+        array![[1.0]]
+    } else {
+        v.t().pearson_correlation().unwrap()
+    }
 }
 
 #[inline]
