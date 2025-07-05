@@ -4,12 +4,16 @@ use ndarray_stats::CorrelationExt;
 use super::types::Result;
 use super::*;
 use crate::{EdgeTypeT, Graph, NodeT, WalksParameters};
-use ndarray::Array2;
+use ndarray::{array, Array2};
 use num_traits::Float;
 use rayon::iter::ParallelIterator;
-use std::collections::HashMap;
+use std::{
+    collections::{HashMap, HashSet},
+    fs::File,
+    io::{self, BufRead},
+};
 
-// type Walk = Vec<NodeT>; // convenience: a seuqence of nodes
+use std::io::Write;
 
 /// Edgetype Transition matrix
 ///
@@ -103,6 +107,59 @@ impl EdgetypeTransitionMatrix {
         Self::from_matrix(transition, ets)
             .expect("all values need to be in [0,1], should be the case with sigmoid!")
     }
+
+    pub fn from_file(fname: &str) -> Self {
+        let file = File::open(fname).expect("file for Edgetype Matrix must exist");
+        let reader = io::BufReader::new(file);
+
+        let mut hmap: HashMap<(EdgeTypeT, EdgeTypeT), f32> = HashMap::new();
+        for line in reader.lines() {
+            if let Ok(l) = line {
+                let items: Vec<_> = l.split(',').collect();
+
+                let n1 = items[0].parse::<EdgeTypeT>().unwrap();
+                let n2 = items[1].parse::<EdgeTypeT>().unwrap();
+                let val = items[2].parse::<f32>().unwrap();
+                hmap.insert((n1, n2), val);
+            }
+        }
+        Self::from_hashmap(hmap).unwrap()
+    }
+    pub fn to_file(&self, fname: &str) {
+        let hmap = self.to_hashmap();
+        let fh = File::create(fname).unwrap();
+        let mut writer = io::BufWriter::new(fh);
+        for ((e1, e2), val) in hmap {
+            writeln!(writer, "{e1},{e2},{val}").unwrap();
+        }
+    }
+
+    /// turns the Matrix into a hasmap of rowname,colname -> value
+    pub fn to_hashmap(&self) -> HashMap<(EdgeTypeT, EdgeTypeT), f32> {
+        let mut hmap: HashMap<(EdgeTypeT, EdgeTypeT), f32> = HashMap::new();
+        for et1 in self.edgetypes.iter() {
+            for et2 in self.edgetypes.iter() {
+                let p = self.get_probability(*et1, *et2);
+                hmap.insert((*et1, *et2), p);
+            }
+        }
+        hmap
+    }
+    pub fn from_hashmap(hmap: HashMap<(EdgeTypeT, EdgeTypeT), f32>) -> Result<Self> {
+        let rownames_set: HashSet<EdgeTypeT> = hmap.keys().map(|x| x.0).collect();
+        let colnames_set: HashSet<EdgeTypeT> = hmap.keys().map(|x| x.1).collect();
+        assert_eq!(rownames_set, colnames_set);
+        let mut rownames: Vec<_> = rownames_set.into_iter().collect();
+        let mut colnames: Vec<_> = colnames_set.into_iter().collect();
+        rownames.sort();
+        colnames.sort();
+
+        let matrix = Array2::from_shape_fn((rownames.len(), colnames.len()), |(i, j)| {
+            hmap.get(&(rownames[i], colnames[j])).unwrap().clone()
+        });
+
+        Self::from_matrix(matrix, rownames)
+    }
 }
 
 /// for a walk (sequence of nodes), retrieve the sequence of edgetypes it traverses
@@ -133,7 +190,7 @@ fn walks_to_edgetype_frequencies(
 
     let mut row_list: Vec<Vec<usize>> = Vec::new();
     let mut counter: HashMap<EdgeTypeT, usize> = HashMap::new();
-    if let Some(ets) = &*graph.edge_types {
+    if let Some(_ets) = &*graph.edge_types {
         for walk in walks {
             for et in walk_to_edgetype_sequence(&walk, graph) {
                 let val = counter.entry(et).or_insert(0);
@@ -180,6 +237,13 @@ fn sigmoid<F: Float>(f: F) -> F {
     F::one() / (F::one() + e.powf(-f))
 }
 
+#[test]
+fn test_sigmoid() {
+    assert_eq!(sigmoid(0.0_f32), 0.5);
+    assert!(sigmoid(-10000.0_f32) < 0.000001 && sigmoid(-10000.0_f32) >= 0.0);
+    assert!(sigmoid(10000.0_f32) <= 1.0 && sigmoid(10000.0_f32) >= 0.9999);
+}
+
 /// Estimate the edgetype transition matrix from the graph
 /// iteratively as proposed by DreamWalk.
 ///     1. simulate random walks
@@ -192,7 +256,10 @@ pub(crate) fn learn_transition_matrix_from_graph(
     nwalks: usize,
     iterations: usize,
 ) -> EdgetypeTransitionMatrix {
-    // assert!(!walk_params.is_dreamwalk_walk(), "make sure paramters are not edgetype biased");
+    assert!(
+        !walk_params.is_dreamwalk_walk(),
+        "make sure paramters are not edgetype biased"
+    );
     let edgetypes: Vec<EdgeTypeT> = graph.get_unique_edge_type_ids().unwrap();
     let matrix = Array2::from_elem((edgetypes.len(), edgetypes.len()), 1.0);
     let etm = EdgetypeTransitionMatrix::from_matrix(matrix, edgetypes).unwrap();
@@ -236,4 +303,34 @@ pub(crate) fn learn_transition_matrix_from_graph(
 
     let res = get_etm(&walk_params).clone(); // again, ugly to get the matrix out of the struct
     res
+}
+
+impl Graph {
+    /// estimates the edgetype transition matrix (dreamwalk) via a simple random walk
+    /// - walk_length:
+    /// - nwalks: number of walks in each iteration of the EM estimation
+    /// - iterations: repeat the EM estimation this many times (or until convergence)
+    pub fn estimate_edgetype_transition_matrix(
+        &self,
+        walk_length: usize,
+        iterations: usize,
+        nwalks: usize,
+    ) -> HashMap<(EdgeTypeT, EdgeTypeT), f32> {
+        let params = WalksParameters::new(walk_length as u64).unwrap();
+        let mat = learn_transition_matrix_from_graph(&self, params, nwalks, iterations);
+        mat.to_hashmap()
+    }
+
+    /// estimate the transition matrix from the graph, write to file as flat CSV
+    pub fn estimate_edgetype_transition_matrix_to_file(
+        &self,
+        walk_length: usize,
+        iterations: usize,
+        nwalks: usize,
+        fname: &str,
+    ) {
+        let params = WalksParameters::new(walk_length as u64).unwrap();
+        let mat = learn_transition_matrix_from_graph(&self, params, nwalks, iterations);
+        mat.to_file(fname);
+    }
 }
