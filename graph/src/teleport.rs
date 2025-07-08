@@ -1,106 +1,18 @@
 use super::types::Result;
 use crate::{NodeT, NodeTypeT};
-use ndarray::{Array2, ArrayView1};
 use std::collections::HashMap;
 use vec_rand::sample_f32;
-
-#[derive(Clone, PartialEq, Debug)]
-pub(crate) struct AnnMatrix {
-    /// Each edgetype is a row/column in the matrix
-    pub rownames: Vec<NodeT>,
-    pub colnames: Vec<NodeT>,
-    /// conversion between row/col index and names
-    rownames_to_index: HashMap<NodeT, usize>, // which row corresponds to the rnowname
-    colnames_to_index: HashMap<NodeT, usize>, // which col corresponds to the colname
-    /// the actual matrix M
-    matrix: Array2<f32>,
-}
-
-impl AnnMatrix {
-    // pub fn new(rownames: Vec<NodeT>, colnames: Vec<NodeT>) -> Self {
-    //     let n = edgetypes.len();
-
-    //     let default_value = 0.0;
-    //     let matrix = Array2::from_elem((n, n), default_value);
-    //     Self::from_matrix(matrix, edgetypes).expect("cant fail as all values are ==0")
-    // }
-
-    pub fn from_matrix(
-        matrix: Array2<f32>,
-        rownames: Vec<NodeT>,
-        colnames: Vec<NodeT>,
-    ) -> Result<Self> {
-        let n = rownames.len();
-        let m = colnames.len();
-        if matrix.shape() != [n, m] {
-            return Err("wrong matrix shape; needs to match length of row/colnames".to_string());
-        }
-
-        let rownames_to_index: HashMap<NodeT, usize> = rownames
-            .iter()
-            .enumerate()
-            .map(|(i, et)| (*et, i))
-            .collect();
-
-        let colnames_to_index: HashMap<NodeT, usize> = colnames
-            .iter()
-            .enumerate()
-            .map(|(i, et)| (*et, i))
-            .collect();
-
-        // ensure all weights are in [0,1]
-        if matrix.iter().all(|x| *x >= 0.0 && *x <= 1.0) {
-            Ok(Self {
-                rownames,
-                colnames,
-                rownames_to_index,
-                colnames_to_index,
-                matrix,
-            })
-        } else {
-            Err("some values were outside [0,1]".to_string())
-        }
-    }
-    fn get_row_index(&self, src_name: NodeT) -> usize {
-        self.rownames_to_index[&src_name]
-    }
-
-    fn get_col_index(&self, dst_name: NodeT) -> usize {
-        self.colnames_to_index[&dst_name]
-    }
-
-    /// return the row/column indices corresponding to the edgetypes
-    /// TODO: return Result, in case the edgetypes dont exist
-    fn get_indices(&self, src_name: NodeT, dst_name: NodeT) -> (usize, usize) {
-        (self.get_row_index(src_name), self.get_col_index(dst_name))
-    }
-
-    /// get the transition probability from one edgtype to another
-    /// TODO: return Result, in case the edgetypes dont exist
-    pub fn get_probability(&self, src_name: NodeT, dst_name: NodeT) -> f32 {
-        let (i1, i2) = self.get_indices(src_name, dst_name);
-        self.matrix[(i1, i2)]
-    }
-
-    /// set the transition probability from one edgtype to another
-    pub fn set_probability(&mut self, src_name: NodeT, dst_name: NodeT, value: f32) {
-        let (i1, i2) = self.get_indices(src_name, dst_name);
-        self.matrix[(i1, i2)] = value;
-    }
-
-    pub fn get_row(&self, src_name: NodeT) -> ArrayView1<f32> {
-        let row_ix = self.get_row_index(src_name);
-        let r = self.matrix.row(row_ix);
-        r
-    }
-}
+use named_matrix::matrix::AnnMatrix;
+use std::fs::File;
+use std::io::{self, BufRead, Write};
+use std::path::Path;
 
 /// For each node type, what are the possible teleports
 // TODO: grrr, dont really want to make that thing clonable, might be big
 // just avoid cloning!
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct TeleportMatrix {
-    teleports: HashMap<NodeTypeT, AnnMatrix>,
+    teleports: HashMap<NodeTypeT, AnnMatrix<NodeT, NodeT, f32>>,
 }
 
 impl TeleportMatrix {
@@ -110,7 +22,7 @@ impl TeleportMatrix {
         Self { teleports }
     }
 
-    pub fn add(&mut self, nodetype: NodeTypeT, matrix: AnnMatrix) {
+    pub fn add(&mut self, nodetype: NodeTypeT, matrix: AnnMatrix<NodeT, NodeT, f32>) {
         self.teleports.insert(nodetype, matrix);
     }
 
@@ -123,7 +35,7 @@ impl TeleportMatrix {
     ) -> Result<NodeT> {
         if let Some(matrix) = self.teleports.get(&nodetype) {
             // warning: sample_f32 mutates the row, make sure this doesnt propagate back into `matrix`!! i.e. keep the `to_vec`
-            let mut row = matrix.get_row(nodeid).to_vec();
+            let mut row = matrix.get_row(&nodeid).to_vec();
             let ix = sample_f32(&mut row, random_state);
             let sampled_nodeid = matrix.rownames[ix];
             Ok(sampled_nodeid)
@@ -131,4 +43,80 @@ impl TeleportMatrix {
             Err("unknown nodetype".to_string())
         }
     }
+    /// constructs the teleport matrices from a single flat dataframe
+    /// with the following shape:
+    /// nodeid1, nodeid2,value, nodetype
+    pub fn from_file(fname: &str) -> Result<Self> {
+        let mut big_hashmap: HashMap<NodeTypeT, HashMap<(NodeT, NodeT), f32>> = HashMap::new(); // from nodetype -> Matrix
+
+        if let Ok(lines) = read_lines(fname) {
+            // Consumes the iterator, returns an (Optional) String
+            for line in lines {
+                if let Ok(l) = line {
+                    let items: Vec<_> = l.split(',').collect();
+
+                    let n1 = items[0].parse::<NodeT>().unwrap();
+                    let n2 = items[1].parse::<NodeT>().unwrap();
+                    let val = items[2].parse::<f32>().unwrap();
+                    let nodetype = items[3].parse::<NodeTypeT>().unwrap();
+                    let hmap = big_hashmap.entry(nodetype).or_insert(HashMap::new());
+                    hmap.insert((n1, n2), val);
+                }
+            }
+
+            let mut teleport_matrix = Self::new();
+            for (ntype, hmap) in big_hashmap {
+                let adata = AnnMatrix::from_hashmap(hmap).unwrap();
+                teleport_matrix.add(ntype, adata);
+            }
+            Ok(teleport_matrix)
+        } else {
+            Err("some issue".to_string())
+        }
+    }
+
+    pub fn to_file(&self, fname: &str) {
+        let file = File::create(fname).unwrap();
+        let mut writer = io::BufWriter::new(file);
+
+        for (&ntype, adata) in self.teleports.iter() {
+            // just iterate over all row,col,val in the matrix
+            adata.iter_elements().for_each(|(r, c, v)| {
+                writeln!(&mut writer, "{r},{c},{v},{ntype}").unwrap();
+            });
+        }
+    }
+}
+
+#[test]
+fn test_to_file_from_file() {
+    use std::iter::FromIterator;
+    let hmap: HashMap<(NodeT, NodeT), f32> = HashMap::from_iter(vec![
+        ((0, 0), 1.0),
+        ((10, 10), 0.3),
+        ((0, 10), 0.0),
+        ((10, 0), 0.5),
+    ]);
+    let q = AnnMatrix::from_hashmap(hmap).unwrap();
+
+    let mut teleport = TeleportMatrix::new();
+    teleport.add(0, q);
+
+    teleport.to_file("/tmp/tel.csv");
+
+    let teleport2 = TeleportMatrix::from_file("/tmp/tel.csv").unwrap();
+    println!("{teleport:?}");
+    assert_eq!(teleport2.teleports[&0].get_value(&0, &0), &1.0);
+    assert_eq!(teleport2.teleports[&0].get_value(&0, &10), &0.0);
+    assert_eq!(teleport2.teleports[&0].get_value(&10, &0), &0.5);
+}
+
+// The output is wrapped in a Result to allow matching on errors.
+// Returns an Iterator to the Reader of the lines of the file.
+fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
+where
+    P: AsRef<Path>,
+{
+    let file = File::open(filename)?;
+    Ok(io::BufReader::new(file).lines())
 }

@@ -477,7 +477,6 @@ impl Graph {
         has_selfloop: bool,
         normalize_by_degree: bool,
     ) -> (Vec<WeightT>, EdgeT) {
-
         // returns the basic edge wegihts for each possible edge
         let mut transition =
             self.get_edge_weighted_transitions(min_edge_id, max_edge_id, probabilistic_indices);
@@ -582,9 +581,12 @@ impl Graph {
             }
         }*/
 
-        if let Some(matrix) = walk_weights.edgetype_transition_matrix.as_ref() {  // weird as_ref since it complaisn about moving out of shared ref
+        if let Some(matrix) = walk_weights.edgetype_transition_matrix.as_ref() {
+            // weird as_ref since it complaisn about moving out of shared ref
 
-            let ets = (&*self.edge_types).as_ref().expect("there should be edgetype when we use transition matrix"); // Todo: ?!? &*
+            let ets = (&*self.edge_types)
+                .as_ref()
+                .expect("there should be edgetype when we use transition matrix"); // Todo: ?!? &*
 
             // try to get an edgetype for the prev edge
             if let Some(this_type) = ets.ids.get(edge_id as usize) {
@@ -594,7 +596,8 @@ impl Graph {
                     .zip(min_edge_id..max_edge_id)
                     .for_each(|(transition_value, next_edge_id)| {
                         let next_edgetype = ets.ids[next_edge_id as usize];
-                        let multiplier = matrix.get_probability(this_type.unwrap(), next_edgetype.unwrap());
+                        let multiplier =
+                            matrix.get_probability(this_type.unwrap(), next_edgetype.unwrap());
                         *transition_value *= multiplier;
                     });
             } else {
@@ -820,7 +823,7 @@ impl Graph {
 
         // TODO check that the node is in the graph
         if start_node >= self.get_number_of_nodes() {
-            return Err("NodeID {start_node} not found in graph".to_string())
+            return Err("NodeID {start_node} not found in graph".to_string());
         }
 
         let random_state = splitmix64(parameters.random_state as u64);
@@ -830,11 +833,11 @@ impl Graph {
                 // let local_index = index % quantity;
                 let random_source_id = start_node;
                 // let random_source_id = splitmix64(
-                    // (random_state + local_index as u64).wrapping_add(0x4cc4854c0155130a),
+                // (random_state + local_index as u64).wrapping_add(0x4cc4854c0155130a),
                 // ) as NodeT;
                 (splitmix64(random_state + index as u64), unsafe {
                     self.get_unchecked_unique_source_node_id(
-                        random_source_id % self.get_number_of_unique_source_nodes(),  // todo not needed
+                        random_source_id % self.get_number_of_unique_source_nodes(), // todo not needed
                     )
                 })
             },
