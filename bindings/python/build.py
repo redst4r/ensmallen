@@ -98,7 +98,8 @@ def compile_target(target_name, target_settings, WHEELS_FOLDER, settings):
     os_name = platform.system().strip().lower()
     print(os_name)
     if os_name == "linux":
-        zig = "--compatibility manylinux2014"
+        # zig = "--compatibility manylinux2014"
+        zig = ""  # turn of compat for now (June2025), Im having a hard time getting it compiled otherweise (cant build the docker container)
         env = {
             #"CXXFLAGS": "-stdlib=libc++",
             #"CXX": "zig c++ -target x86_64-linux-gnu.2.16",
