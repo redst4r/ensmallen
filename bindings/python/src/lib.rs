@@ -30,6 +30,7 @@ pub(crate) use node_label_prediction_perceptron::*;
 mod hyper_jaccard;
 pub(crate) use hyper_jaccard::*;
 
+// TODO: these create a HUGE amount of LLVM code!!
 mod hyper_sketching;
 pub(crate) use hyper_sketching::*;
 

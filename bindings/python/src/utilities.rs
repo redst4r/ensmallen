@@ -1,6 +1,8 @@
 use super::*;
 use cpu_models::FeatureSlice;
-use graph::{EdgetypeTransitionMatrix, NodeT, WalksParameters, WeightT};
+use graph::{
+    EdgetypeTransitionMatrix, NodeT, TeleportMatrix, TeleportParameters, WalksParameters, WeightT,
+};
 use numpy::PyArray2;
 
 /// Return new walk parameters object from provided kwargs.
@@ -45,7 +47,18 @@ pub(crate) fn build_walk_parameters(kwargs: &PyDict) -> PyResult<WalksParameters
             .set_edgetype_transition_matrix(EdgetypeTransitionMatrix::from_file(etmatrix_file)))?;
     }
 
-    // TODO: add the teleport matrix and edgetype_matrix here
+    //add the Teleport matrix here if given
+    // NOTE: bit hacky, we use "empty" as the placeholder
+    let teleport_file = extract_value_rust_result!(kwargs, "teleport_file", &str)
+        .expect("build_walk_params: error extracting teleport-file");
+    let teleport_prob = extract_value_rust_result!(kwargs, "teleport_probability", WeightT)
+        .expect("build_walk_params: failed to get teleport probability");
+    if etmatrix_file != "empty" {
+        let m = TeleportMatrix::from_file(teleport_file)
+            .expect("issue creating teleport matrix from file");
+        let telepara = TeleportParameters::new(teleport_prob, m);
+        params = pe!(params.set_teleport_parameters(telepara))?;
+    }
     Ok(params)
 }
 

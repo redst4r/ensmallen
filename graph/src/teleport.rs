@@ -1,17 +1,20 @@
 use super::types::Result;
 use crate::{NodeT, NodeTypeT};
-use std::collections::HashMap;
-use vec_rand::sample_f32;
 use named_matrix::matrix::AnnMatrix;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead, Write};
 use std::path::Path;
+use vec_rand::sample_f32;
 
+use super::no_binding;
 /// For each node type, what are the possible teleports
 // TODO: grrr, dont really want to make that thing clonable, might be big
+// but we have to in order to use it inside WalkParams
 // just avoid cloning!
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct TeleportMatrix {
+#[no_binding]
+pub struct TeleportMatrix {
     teleports: HashMap<NodeTypeT, AnnMatrix<NodeT, NodeT, f32>>,
 }
 
@@ -119,4 +122,16 @@ where
 {
     let file = File::open(filename)?;
     Ok(io::BufReader::new(file).lines())
+}
+
+#[test]
+fn test_from_python_file() {
+    println!("loading");
+    let teleport = TeleportMatrix::from_file("/tmp/teleport_python.csv").unwrap();
+    println!("loaded; now sampling");
+    for i in 0..1000 {
+        let r = teleport.sample_teleport(i, 0, 42);
+        println!("{r:?}")
+    }
+    println!("done sampling");
 }

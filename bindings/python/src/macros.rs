@@ -116,6 +116,8 @@ pub fn build_walk_parameters_list<'a>(parameters: &[&'a str]) -> Vec<&'a str> {
 }
 
 /// Validate given kwargs.
+///
+/// Basically check if kwargs is a subset of columns
 pub fn validate_kwargs(kwargs: &PyDict, columns: &[&str]) -> Result<(), String> {
     let mut keys: HashSet<String> = kwargs
         .keys()

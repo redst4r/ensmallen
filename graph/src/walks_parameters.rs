@@ -9,7 +9,14 @@ pub struct TeleportParameters {
     // where to teleport
     pub(crate) teleport_matrix: teleport::TeleportMatrix,
 }
-
+impl TeleportParameters {
+    pub fn new(teleport_probability: f32, teleport_matrix: teleport::TeleportMatrix) -> Self {
+        Self {
+            teleport_probability,
+            teleport_matrix,
+        }
+    }
+}
 #[derive(Clone, Debug, PartialEq)]
 /// Struct to wrap walk weights.
 #[no_binding]
@@ -98,7 +105,8 @@ impl WalkWeights {
             self.explore_weight,
         ]
         .iter()
-        .all(|weight| !not_one(*weight)) && !self.is_dream_walk()
+        .all(|weight| !not_one(*weight))
+            && !self.is_dream_walk()
     }
 
     /// Return boolean value representing if walk is a Node2Vec walk.
@@ -115,7 +123,7 @@ impl WalkWeights {
         [self.return_weight, self.explore_weight]
             .iter()
             .any(|weight| not_one(*weight))
-        && !self.is_dream_walk()  // check that transition matrix is uniform
+            && !self.is_dream_walk() // check that transition matrix is uniform
     }
 
     /// Check if an Edgetype Transition matrix is present or teleport is enabled, indicating a DreamWalk
