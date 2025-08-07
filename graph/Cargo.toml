@@ -49,7 +49,7 @@ heterogeneous_graphlets = {git = "https://github.com/LucaCappelletti94/heterogen
 v_htmlescape = "0.13.1"
 linked_hash_set = "0.1.4"
 hashbrown = {version="0.14", features=["rayon"]}
-indicatif = {version="0.16.0", features = ["rayon"]} # TODO: bump to 0.17 to make consistent across package
+indicatif = {version="0.17.0", features = ["rayon"]}
 arbitrary = { version = "0.4.5", features = ["derive"] }
 mmap = {path = "./mmap"}
 csr = {path = "./csr"}
