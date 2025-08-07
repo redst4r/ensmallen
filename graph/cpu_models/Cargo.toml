@@ -6,8 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-# vec_rand = { git = "https://github.com/zommiommy/vec_rand", branch = "master" }
-vec_rand = { git = "https://github.com/redst4r/vec_rand", branch = "master" }
+vec_rand = { git = "https://github.com/zommiommy/vec_rand", branch = "master" }
 
 graph = {path = "../"}
 express_measures = {path = "../express_measures"}
@@ -22,7 +21,9 @@ serde_json = "1.0"
 hyperloglog-rs = {version="0.1.51", features=["std"]}
 heterogeneous_graphlets = {git = "https://github.com/LucaCappelletti94/heterogeneous_graphlets"}
 num-traits = {git="https://github.com/zommiommy/num-traits.git", features=["atomic_from_mut"]}
-parallel_frontier = {git="https://github.com/zommiommy/parallel_frontier"}
+# parallel_frontier = {git="https://github.com/zommiommy/parallel_frontier", rev = "13fe5c8"}
+parallel_frontier = {git="https://github.com/zommiommy/parallel_frontier", rev = "8efb04e"} # older version, still has the TryInto for Frontier
+
 half = {version = "2.4", features = ["use-intrinsics", "num-traits"]}
 ndarray-csv = "0.5"
 csv = "1.3"

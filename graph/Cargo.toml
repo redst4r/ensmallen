@@ -55,15 +55,17 @@ mmap = {path = "./mmap"}
 csr = {path = "./csr"}
 express_measures = {path = "./express_measures"}
 roaring = { git = "https://github.com/zommiommy/roaring-rs", branch = "master" }
-# vec_rand = { git = "https://github.com/zommiommy/vec_rand", branch = "master" }
-vec_rand = { git = "https://github.com/redst4r/vec_rand", branch = "master" }
+
+vec_rand = { git = "https://github.com/zommiommy/vec_rand", branch = "master" }
 
 visited-rs = { git = "https://github.com/LucaCappelletti94/visited-rs", branch = "main" }
 hyperloglog-rs = {version="0.1.51", features=["std"]}
 elias_fano_rust = "0.1.1"
 tags = {path="./tags/"}
 atoi_radix10 = { git = "https://github.com/gilescope/atoi_radix10"}
-parallel_frontier = {git="https://github.com/zommiommy/parallel_frontier"}
+# parallel_frontier = {git="https://github.com/zommiommy/parallel_frontier", rev = "13fe5c8"}  # prelude (Frontyier and rayon still in)
+parallel_frontier = {git="https://github.com/zommiommy/parallel_frontier", rev = "8efb04e"} # older version, still has the TryInto for Frontier
+
 xxhash-rust = {version ="0.8.6", features=["xxh3"]}
 siphasher = "0.3"
 parquet="53.3.0"
