@@ -53,7 +53,7 @@ pub(crate) fn build_walk_parameters(kwargs: &PyDict) -> PyResult<WalksParameters
         .expect("build_walk_params: error extracting teleport-file");
     let teleport_prob = extract_value_rust_result!(kwargs, "teleport_probability", WeightT)
         .expect("build_walk_params: failed to get teleport probability");
-    if etmatrix_file != "empty" {
+    if teleport_file != "empty" {
         let m = TeleportMatrix::from_file(teleport_file)
             .expect("issue creating teleport matrix from file");
         let telepara = TeleportParameters::new(teleport_prob, m);

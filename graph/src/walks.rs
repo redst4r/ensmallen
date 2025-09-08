@@ -1097,8 +1097,8 @@ impl Graph {
     ///
     /// returns None if there's
     /// - no teleports allowed by the WalkParamters
-    /// - no teleport possible (the nodetype is not allowed to teleport)
-    /// -teleport allowed, but wasn't executed (since we only do it with a certain probability)
+    /// - no teleport possible (the nodetype is not allowed to teleport, or the current node has no place to teleport to)
+    /// - teleport allowed, but wasn't executed (since we only do it with a certain probability)
     fn roll_teleport(
         &self,
         node: NodeT,
@@ -1114,7 +1114,7 @@ impl Graph {
                 // get nodetype
                 let ets = (&*self.node_types)
                     .as_ref()
-                    .expect("there should be nodetypes when we use teleport matrix"); // Todo: ?!? &*
+                    .expect("there should be nodetypes when we use teleport matrix"); // TODO: ?!? &*
 
                 // just a weird convoluted way to get the nodetype
                 let nodetype: NodeTypeT = match &ets.ids[node as usize] {
@@ -1125,15 +1125,19 @@ impl Graph {
 
                 let random_state = splitmix64(random_state);
 
-                // attempt teleport, might fail if the nodetype is not `teleportable`
-                if let Ok(teleport_target) =
-                    tele_params
-                        .teleport_matrix
-                        .sample_teleport(node, nodetype, random_state)
+                // attempt teleport, might fail if the nodetype is not `teleportable` or the node has nowhere to teleport
+                match tele_params
+                    .teleport_matrix
+                    .sample_teleport(node, nodetype, random_state)
                 {
-                    Some(teleport_target)
-                } else {
-                    None
+                    Ok(teleport_target) => {
+                        // println!("Teleport");
+                        Some(teleport_target)
+                    }
+                    Err(msg) => {
+                        // println!("Teleport fizzled {}", msg);
+                        None
+                    }
                 }
             } else {
                 // no teleport
