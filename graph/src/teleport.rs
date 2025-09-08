@@ -1,13 +1,14 @@
+use super::no_binding;
 use super::types::Result;
 use crate::{NodeT, NodeTypeT};
+use arrow_array::ArrowNativeTypeOp;
 use named_matrix::matrix::AnnMatrix;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead, Write};
+use std::iter;
 use std::path::Path;
 use vec_rand::sample_f32;
-
-use super::no_binding;
 /// For each node type, what are the possible teleports
 // TODO: grrr, dont really want to make that thing clonable, might be big
 // but we have to in order to use it inside WalkParams
@@ -29,7 +30,11 @@ impl TeleportMatrix {
         self.teleports.insert(nodetype, matrix);
     }
 
-    // for the given node/type, sample a new node to teleport to
+    /// for the given node/type, sample a new node to teleport to
+    /// returns
+    /// - Ok(somenode) if successful
+    /// - Err("unknown nodetype") if the nodetype doesnt have a teleprot matrix
+    /// - Err("no target") if the node cant teleport anywhere
     pub fn sample_teleport(
         &self,
         nodeid: NodeT,
@@ -37,11 +42,20 @@ impl TeleportMatrix {
         random_state: u64,
     ) -> Result<NodeT> {
         if let Some(matrix) = self.teleports.get(&nodetype) {
-            // warning: sample_f32 mutates the row, make sure this doesnt propagate back into `matrix`!! i.e. keep the `to_vec`
-            let mut row = matrix.get_row(&nodeid).to_vec();
-            let ix = sample_f32(&mut row, random_state);
-            let sampled_nodeid = matrix.rownames[ix];
-            Ok(sampled_nodeid)
+            if let Some(row) = matrix.get_row(&nodeid) {
+                // warning: sample_f32 mutates the row, make sure this doesnt propagate back into `matrix`!! i.e. keep the `to_vec`
+                let mut rrr = row.to_vec();
+
+                if rrr.iter().all(|&x| x.is_zero()) {
+                    return Err("all targets are zero".to_string());
+                }
+                let ix = sample_f32(&mut rrr, random_state);
+                let sampled_nodeid = matrix.rownames[ix];
+                Ok(sampled_nodeid)
+            } else {
+                // nodeid not in the teleport matrix
+                Err("no target".to_string())
+            }
         } else {
             Err("unknown nodetype".to_string())
         }
@@ -67,14 +81,16 @@ impl TeleportMatrix {
                 }
             }
 
+            println!("Contrsucting teleport matrix");
             let mut teleport_matrix = Self::new();
             for (ntype, hmap) in big_hashmap {
                 let adata = AnnMatrix::from_hashmap(hmap).unwrap();
                 teleport_matrix.add(ntype, adata);
             }
+            println!("Done Contrsucting teleport matrix");
             Ok(teleport_matrix)
         } else {
-            Err("some issue".to_string())
+            Err("error reading Teleport matrix, prob the file doesnt exist".to_string())
         }
     }
 
@@ -89,6 +105,35 @@ impl TeleportMatrix {
             });
         }
     }
+}
+
+#[test]
+fn test_sample_teleport() {
+    use std::iter::FromIterator;
+    let hmap: HashMap<(NodeT, NodeT), f32> = HashMap::from_iter(vec![
+        ((0, 0), 1.0),
+        ((0, 10), 0.0),
+        ((10, 10), 0.0),
+        ((10, 0), 0.0),
+    ]);
+    let q = AnnMatrix::from_hashmap(hmap).unwrap();
+
+    let mut teleport = TeleportMatrix::new();
+    teleport.add(0, q);
+
+    assert_eq!(teleport.sample_teleport(0, 0, 42), Ok(0));
+    assert_eq!(
+        teleport.sample_teleport(0, 1234, 42),
+        Err("unknown nodetype".to_string())
+    );
+    assert_eq!(
+        teleport.sample_teleport(1234, 0, 42),
+        Err("no target".to_string())
+    );
+    assert_eq!(
+        teleport.sample_teleport(10, 0, 42),
+        Err("all targets are zero".to_string())
+    );
 }
 
 #[test]
