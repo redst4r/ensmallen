@@ -1,16 +1,16 @@
 use super::no_binding;
 use super::types::Result;
 use crate::{NodeT, NodeTypeT};
-use arrow_array::ArrowNativeTypeOp;
-use named_matrix::matrix::AnnMatrix;
+// use arrow_array::ArrowNativeTypeOp;
+// use named_matrix::matrix::AnnMatrix;
 use named_matrix::sparse::AnnMatrixSparse;
-use ndarray::array;
+// use ndarray::array;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, BufRead, BufReader, BufWriter, Write};
-use std::iter;
+use std::io::{self, BufRead, Write};
+// use std::iter;
 use std::path::Path;
-use vec_rand::sample_f32;
+// use vec_rand::sample_f32;
 
 /// For each node type, what are the possible teleports
 // TODO: grrr, dont really want to make that thing clonable, might be big
@@ -29,7 +29,7 @@ impl TeleportMatrix {
         Self { teleports }
     }
 
-    pub fn add(&mut self, nodetype: NodeTypeT, matrix: AnnMatrix<NodeT, NodeT>) {
+    pub fn add(&mut self, nodetype: NodeTypeT, matrix: AnnMatrixSparse<NodeT, NodeT>) {
         self.teleports.insert(nodetype, matrix);
     }
 
@@ -57,7 +57,7 @@ impl TeleportMatrix {
     //             Ok(sampled_nodeid)
     //         } else {
     //             // nodeid not in the teleport matrix
-    //             Err("no target".to_string())
+    //             Err("rowname unknown".to_string())
     //         }
     //     } else {
     //         Err("unknown nodetype".to_string())
@@ -73,7 +73,7 @@ impl TeleportMatrix {
             // this will try to sample, but can fail if
             // - nodeid not in the rows
             // - the entire row is zeros
-            matrix.sample_from_row(nodeid, random_state)
+            matrix.sample_from_row(&nodeid, random_state)
         } else {
             Err("unknown nodetype".to_string())
         }
@@ -102,7 +102,7 @@ impl TeleportMatrix {
             println!("Contrsucting teleport matrix");
             let mut teleport_matrix = Self::new();
             for (ntype, hmap) in big_hashmap {
-                let adata = AnnMatrix::from_hashmap(hmap).unwrap();
+                let adata = AnnMatrixSparse::from_hashmap(hmap);
                 teleport_matrix.add(ntype, adata);
             }
             println!("Done Contrsucting teleport matrix");
@@ -134,7 +134,7 @@ fn test_sample_teleport() {
         ((10, 10), 0.0),
         ((10, 0), 0.0),
     ]);
-    let q = AnnMatrix::from_hashmap(hmap).unwrap();
+    let q = AnnMatrixSparse::from_hashmap(hmap);
 
     let mut teleport = TeleportMatrix::new();
     teleport.add(0, q);
@@ -146,7 +146,7 @@ fn test_sample_teleport() {
     );
     assert_eq!(
         teleport.sample_teleport(1234, 0, 42),
-        Err("no target".to_string())
+        Err("rowname unknown".to_string())
     );
     assert_eq!(
         teleport.sample_teleport(10, 0, 42),
@@ -163,7 +163,7 @@ fn test_to_file_from_file() {
         ((0, 10), 0.0),
         ((10, 0), 0.5),
     ]);
-    let q = AnnMatrix::from_hashmap(hmap).unwrap();
+    let q = AnnMatrixSparse::from_hashmap(hmap);
 
     let mut teleport = TeleportMatrix::new();
     teleport.add(0, q);
@@ -190,10 +190,12 @@ where
 #[test]
 fn test_from_python_file() {
     println!("loading");
-    let teleport = TeleportMatrix::from_file("/tmp/teleport_python.csv").unwrap();
+    let teleport = TeleportMatrix::from_file("/tmp/ATC.csv").unwrap();
+
+    let rows = teleport.teleports.get(&0).unwrap().rownames.clone();
     println!("loaded; now sampling");
-    for i in 0..1000 {
-        let r = teleport.sample_teleport(i, 0, 42);
+    for i in rows.iter().take(100) {
+        let r = teleport.sample_teleport(*i, 0, 42);
         println!("{r:?}")
     }
     println!("done sampling");
