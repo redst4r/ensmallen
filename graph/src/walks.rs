@@ -1116,6 +1116,9 @@ impl Graph {
                     .as_ref()
                     .expect("there should be nodetypes when we use teleport matrix"); // TODO: ?!? &*
 
+                // TODO: why not jsut use this func to get the nodetype??
+                // let nodetype = self.get_node_type_ids_from_node_id(node);
+                //
                 // just a weird convoluted way to get the nodetype
                 let nodetype: NodeTypeT = match &ets.ids[node as usize] {
                     //Option<Vec<NodeTypeT>>
@@ -1123,16 +1126,22 @@ impl Graph {
                     None => panic!(),                // cant happen
                 };
 
+                // translate nodetype_id to nodetype_name
+                let nodetype_name = self.get_node_type_name_from_node_type_id(nodetype).unwrap();
+                let nodename = self.get_node_name_from_node_id(node).unwrap();
+
                 let random_state = splitmix64(random_state);
 
                 // attempt teleport, might fail if the nodetype is not `teleportable` or the node has nowhere to teleport
-                match tele_params
-                    .teleport_matrix
-                    .sample_teleport(node, nodetype, random_state)
-                {
+                match tele_params.teleport_matrix.sample_teleport(
+                    nodename,
+                    nodetype_name,
+                    random_state,
+                ) {
                     Ok(teleport_target) => {
                         // println!("Teleport");
-                        Some(teleport_target)
+                        let target_id = self.get_node_id_from_node_name(&teleport_target).unwrap();
+                        Some(target_id)
                     }
                     Err(msg) => {
                         // println!("Teleport fizzled {}", msg);
